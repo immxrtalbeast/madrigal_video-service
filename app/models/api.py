@@ -1,0 +1,59 @@
+from __future__ import annotations
+
+from typing import List, Optional
+
+from pydantic import BaseModel, ConfigDict, Field, validator
+
+from .domain import VideoJob, VideoJobStage
+
+
+class VideoGenerationRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    idea: str = Field(..., validation_alias="idea")
+    duration_seconds: Optional[int] = Field(default=45, ge=15, le=300, validation_alias="duration_seconds")
+    language: Optional[str] = Field(default=None, validation_alias="language")
+    style: Optional[str] = Field(default=None, validation_alias="style")
+    target_audience: Optional[str] = Field(default=None, validation_alias="target_audience")
+    template_id: Optional[str] = Field(default=None, validation_alias="template_id")
+    constraints: Optional[List[str]] = Field(default=None, validation_alias="constraints")
+    source_video_url: Optional[str] = Field(default=None, validation_alias="source_video_url")
+    aspect_ratio: Optional[str] = Field(default="9:16", validation_alias="aspect_ratio")
+    voice_profile: Optional[str] = Field(default=None, validation_alias="voice_profile")
+    soundtrack: Optional[str] = Field(default=None, validation_alias="soundtrack")
+    storyboard_ref: Optional[str] = Field(default=None, validation_alias="storyboard_ref")
+
+    @validator("idea")
+    def validate_idea(cls, value: str) -> str:  # noqa: D417
+        if len(value.strip()) < 5:
+            raise ValueError("idea must contain at least 5 characters")
+        return value
+
+
+class VideoJobResponse(BaseModel):
+    job: VideoJob
+
+
+class VideoJobListResponse(BaseModel):
+    items: List[VideoJob]
+
+
+class IdeaExpansionRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    idea: str = Field(..., validation_alias="idea")
+    tone: Optional[str] = Field(default=None, validation_alias="tone")
+    language: Optional[str] = Field(default=None, validation_alias="language")
+    target_audience: Optional[str] = Field(default=None, validation_alias="target_audience")
+    duration_seconds: Optional[int] = Field(default=None, validation_alias="duration_seconds")
+    output_format: Optional[str] = Field(default=None, validation_alias="output_format")
+
+    @validator("idea")
+    def validate_expand_idea(cls, value: str) -> str:  # noqa: D417
+        if len(value.strip()) < 5:
+            raise ValueError("idea must contain at least 5 characters")
+        return value
+
+
+class IdeaExpansionResponse(BaseModel):
+    summary: str

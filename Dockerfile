@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl ca-certificates xz-utils && \
+    apt-get install -y --no-install-recommends curl ca-certificates xz-utils libsndfile1 && \
     rm -rf /var/lib/apt/lists/* && \
     curl -sSL https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -o /tmp/ffmpeg.tar.xz && \
     tar -xJf /tmp/ffmpeg.tar.xz -C /tmp && \
@@ -21,7 +21,7 @@ COPY requirements.txt /tmp/requirements.txt
 
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir --no-index --find-links /tmp/vendor torch==2.2.1+cpu torchvision==0.17.1+cpu && \
-    pip install --no-cache-dir --no-index --find-links /tmp/vendor -r /tmp/requirements.txt && \
+    pip install --no-cache-dir -r /tmp/requirements.txt && \
     rm -rf /tmp/vendor /tmp/requirements.txt
 
 COPY app /app/app

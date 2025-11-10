@@ -5,3 +5,4 @@ pydantic==2.5.0
 pydantic-settings==2.0.3
 httpx==0.26.0
 openai-whisper==20231117
+numpy==1.26.4

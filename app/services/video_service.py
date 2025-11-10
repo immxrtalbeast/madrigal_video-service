@@ -225,7 +225,11 @@ class VideoService:
             try:
                 subtitles_text = self.whisper.transcribe(audio_bytes)
             except Exception as exc:  # pragma: no cover
-                self.log.warning("whisper transcription failed", extra={"job_id": str(job.id), "error": str(exc)})
+                self.log.warning(
+                    "whisper transcription failed",
+                    extra={"job_id": str(job.id)},
+                    exc_info=exc,
+                )
         subtitles_path = f"{job.assets_folder}/subtitles.srt"
         subtitles_url = self.storage.upload_text(
             subtitles_path,

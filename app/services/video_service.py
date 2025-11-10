@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 from app.clients.gemini import GeminiClient
 from app.clients.supabase_storage import SupabaseStorageClient
+from app.clients.tts import ElevenLabsClient
 from app.config import Settings
 from app.models.api import IdeaExpansionRequest, VideoGenerationRequest
 from app.models.domain import (
@@ -31,6 +32,15 @@ class VideoService:
             model=settings.gemini_model,
             logger=self.log,
         )
+        self.tts = None
+        if settings.tts_provider.lower() == "elevenlabs":
+            self.tts = ElevenLabsClient(
+                api_key=settings.elevenlabs_api_key,
+                voice_id=settings.elevenlabs_voice_id,
+                model_id=settings.elevenlabs_model_id,
+                base_url=settings.elevenlabs_base_url,
+                logger=self.log,
+            )
         self.storage = SupabaseStorageClient(
             api_url=settings.supabase_api_url,
             public_url=settings.supabase_public_url,
@@ -145,19 +155,49 @@ class VideoService:
         voice_script = "\n".join(
             scene.get("voiceover", "") for scene in storyboard.get("scenes", []) if scene.get("voiceover")
         ) or f"Озвучка для ролика '{job.idea}'."
-        voice_path = f"{job.assets_folder}/audio/voiceover.txt"
-        voice_url = self.storage.upload_text(
-            voice_path,
+        voice_script_path = f"{job.assets_folder}/audio/voiceover.txt"
+        voice_script_url = self.storage.upload_text(
+            voice_script_path,
             voice_script,
             content_type="text/plain; charset=utf-8",
         )
         self._add_artifact(
             job,
-            kind="voiceover",
-            path=voice_path,
-            url=voice_url,
-            metadata={"tts_provider": self.settings.tts_provider, "voice": job.voice_profile},
+            kind="voiceover_script",
+            path=voice_script_path,
+            url=voice_script_url,
+            metadata={"voice": job.voice_profile},
         )
+
+        voice_audio_url: str | None = None
+        voice_audio_path: str | None = None
+        if self.tts and self.tts.enabled():
+            audio_bytes = self.tts.synthesize(voice_script)
+            voice_audio_path = f"{job.assets_folder}/audio/voiceover.mp3"
+            voice_audio_url = self.storage.upload_bytes(
+                voice_audio_path,
+                audio_bytes,
+                content_type="audio/mpeg",
+            )
+            self._add_artifact(
+                job,
+                kind="voiceover",
+                path=voice_audio_path,
+                url=voice_audio_url,
+                metadata={
+                    "tts_provider": self.settings.tts_provider,
+                    "voice": job.voice_profile,
+                    "model": self.settings.elevenlabs_model_id,
+                },
+            )
+        else:
+            self._add_artifact(
+                job,
+                kind="voiceover",
+                path=voice_script_path,
+                url=voice_script_url,
+                metadata={"provider": "text-only"},
+            )
 
         soundtrack_path = f"{job.assets_folder}/audio/soundtrack.txt"
         soundtrack_url = self.storage.upload_text(

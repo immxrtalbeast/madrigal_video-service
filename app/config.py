@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     tts_provider: str = "google-tts"
     tts_voice: str = "ru-RU-Standard-C"
     backing_track: str = "viral-beat"
+    elevenlabs_api_key: str = ""
+    elevenlabs_voice_id: str = ""
+    elevenlabs_model_id: str = "eleven_multilingual_v2"
+    elevenlabs_base_url: str = "https://api.elevenlabs.io"
 
     gemini_api_key: str = ""
     gemini_model: str = "models/gemini-pro"

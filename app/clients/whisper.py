@@ -31,9 +31,25 @@ class LocalWhisperClient:
             tmp.write(audio)
             tmp.flush()
             result = self._model.transcribe(tmp.name, task="transcribe", verbose=False)
-        srt = whisper.utils.format_srt(result["segments"])
+        srt = self._format_srt(result["segments"])
         self.log.info(
             "whisper transcription completed (local)",
             extra={"model": self.model_name, "segments": len(result.get("segments", []))},
         )
         return srt
+    def _format_srt(self, segments: list[dict]) -> str:
+        lines: list[str] = []
+        for idx, segment in enumerate(segments, start=1):
+            start = self._format_timestamp(segment.get("start", 0.0))
+            end = self._format_timestamp(segment.get("end", 0.0))
+            text = (segment.get("text") or "").strip()
+            if not text:
+                continue
+            lines.append(f"{idx}\n{start} --> {end}\n{text}\n")
+        return "\n".join(lines)
+    def _format_timestamp(self, seconds: float) -> str:
+        total_ms = int(seconds * 1000)
+        hours, rem = divmod(total_ms, 3600 * 1000)
+        minutes, rem = divmod(rem, 60 * 1000)
+        secs, ms = divmod(rem, 1000)
+        return f"{hours:02}:{minutes:02}:{secs:02},{ms:03}"

@@ -23,7 +23,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir --no-index --find-links /tmp/vendor torch==2.2.1+cpu torchvision==0.17.1+cpu && \
     pip install --no-cache-dir -r /tmp/requirements.txt && \
     rm -rf /tmp/vendor /tmp/requirements.txt
-
+    
+COPY models /root/.cache/whisper
 COPY app /app/app
 
 EXPOSE 8100

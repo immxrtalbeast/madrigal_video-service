@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     elevenlabs_voice_id: str = ""
     elevenlabs_model_id: str = "eleven_multilingual_v2"
     elevenlabs_base_url: str = "https://api.elevenlabs.io"
+    whisper_local_model: str = "base"
 
     gemini_api_key: str = ""
     gemini_model: str = "models/gemini-pro"

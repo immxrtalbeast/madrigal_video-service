@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 from app.clients.gemini import GeminiClient
 from app.clients.supabase_storage import SupabaseStorageClient
 from app.clients.tts import ElevenLabsClient
+from app.clients.whisper import LocalWhisperClient
 from app.config import Settings
 from app.models.api import IdeaExpansionRequest, VideoGenerationRequest
 from app.models.domain import (
@@ -39,6 +40,12 @@ class VideoService:
                 voice_id=settings.elevenlabs_voice_id,
                 model_id=settings.elevenlabs_model_id,
                 base_url=settings.elevenlabs_base_url,
+                logger=self.log,
+            )
+        self.whisper = None
+        if settings.whisper_local_model:
+            self.whisper = LocalWhisperClient(
+                model_name=settings.whisper_local_model,
                 logger=self.log,
             )
         self.storage = SupabaseStorageClient(
@@ -171,6 +178,7 @@ class VideoService:
 
         voice_audio_url: str | None = None
         voice_audio_path: str | None = None
+        audio_bytes: bytes | None = None
         if self.tts and self.tts.enabled():
             audio_bytes = self.tts.synthesize(voice_script)
             voice_audio_path = f"{job.assets_folder}/audio/voiceover.mp3"
@@ -213,6 +221,11 @@ class VideoService:
         )
 
         subtitles_text = self._build_subtitles(storyboard.get("scenes", []))
+        if audio_bytes and self.whisper and self.whisper.enabled():
+            try:
+                subtitles_text = self.whisper.transcribe(audio_bytes)
+            except Exception as exc:  # pragma: no cover
+                self.log.warning("whisper transcription failed", extra={"job_id": str(job.id), "error": str(exc)})
         subtitles_path = f"{job.assets_folder}/subtitles.srt"
         subtitles_url = self.storage.upload_text(
             subtitles_path,

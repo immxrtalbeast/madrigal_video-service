@@ -12,11 +12,11 @@
 ## Технологии
 - Python 3.11, FastAPI, Pydantic.
 - Kafka / локальная очередь.
-- Gemini API (storyboard), ElevenLabs TTS (аудио), Supabase Storage (артефакты).
+- Gemini API (storyboard), ElevenLabs TTS (аудио), локальный Whisper (openai-whisper + ffmpeg) для субтитров, Supabase Storage (артефакты).
 - httpx для внешних вызовов, pytest для тестов.
 
 ## TODO
-1. Подключить реальные генераторы визуалов (text2img/стоки) и музыку/Whisper для субтитров, добавить готовые библиотеки ассетов.
+1. Подключить реальные генераторы визуалов (text2img/стоки) и музыку, добавить готовые библиотеки ассетов.
 2. Вынести рендер в отдельный воркер с FFmpeg/MoviePy и обновлением `final.mp4` после сборки.
 3. Перенести `VideoJob` в постоянное хранилище (Postgres), добавить ретраи и WebSocket/вебхуки статусов.
 4. Настроить метрики/логирование (Prometheus, Sentry) и лимиты на внешний API.
@@ -37,4 +37,5 @@ poetry run uvicorn app.main:app --reload --port 8100
 - `GEMINI_API_KEY`, `GEMINI_MODEL`.
 - `TEXT2IMG_PROVIDER`, `TTS_PROVIDER`, `TTS_VOICE`, `BACKING_TRACK`.
 - `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_MODEL_ID`, `ELEVENLABS_BASE_URL` (нужны при `TTS_PROVIDER=elevenlabs`).
+- `WHISPER_LOCAL_MODEL` — название локальной модели (например, `base`, `small`). Нужны зависимости `openai-whisper` и `ffmpeg`.
 Все значения можно описать в `video-service/.env` и подключить через `env_file` в docker-compose.

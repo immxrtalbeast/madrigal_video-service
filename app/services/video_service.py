@@ -147,6 +147,7 @@ class VideoService:
             target_audience=job.target_audience,
             style=job.style or self.settings.default_style,
             duration_seconds=job.duration_seconds,
+            target_duration=job.duration_seconds,
         )
         self._update_status(job, VideoJobStage.DRAFTING, "Drafted storyboard via Gemini")
         job.storyboard_summary = storyboard.get("summary")
@@ -205,7 +206,7 @@ class VideoService:
         voice_audio_path: str | None = None
         audio_bytes: bytes | None = None
         if self.tts and self.tts.enabled():
-            audio_bytes = self.tts.synthesize(voice_script)
+            audio_bytes = self.tts.synthesize(voice_script, job.duration_seconds)
             voice_audio_path = f"{job.assets_folder}/audio/voiceover.mp3"
             voice_audio_url = self.storage.upload_bytes(
                 voice_audio_path,

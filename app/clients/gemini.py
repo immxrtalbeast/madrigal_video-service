@@ -39,11 +39,12 @@ class GeminiClient:
         style: str,
         duration_seconds: int,
         num_scenes: int = 5,
+        wpm_hint: int = 160,
     ) -> dict[str, Any]:
         if not self.enabled():
             return self._fallback_storyboard(idea, target_audience, style, duration_seconds, num_scenes)
 
-        prompt = self._build_prompt(idea, target_audience, style, duration_seconds, num_scenes)
+        prompt = self._build_prompt(idea, target_audience, style, duration_seconds, num_scenes, wpm_hint)
         url = f"https://generativelanguage.googleapis.com/v1beta/{self.model}:generateContent"
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
@@ -129,14 +130,18 @@ class GeminiClient:
         style: str,
         duration_seconds: int,
         num_scenes: int,
+        wpm_hint: int,
     ) -> str:
         target = target_audience or "широкая аудитория"
+        total_words = max(30, int(duration_seconds * wpm_hint / 60))
         return (
             "Generate JSON storyboard of short vertical video."
             "Struct: {\"summary\": \"...\", \"scenes\": ["
             "{\"title\": str, \"focus\": str, \"voiceover\": str, \"visual\": str, \"duration_seconds\": int}"
             "]}. "
             f"Idea: {idea}. Style: {style}. target_audience: {target}. Duration: {duration_seconds} seconds. "
+            f"Voiceover speed is about {wpm_hint} words per minute, so keep the whole script within {total_words} words "
+            "and balance each scene accordingly."
             f"Number of scenes: {num_scenes}. Response only valid JSON without comments."
         )
 

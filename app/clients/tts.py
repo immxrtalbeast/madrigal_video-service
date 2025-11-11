@@ -26,7 +26,7 @@ class ElevenLabsClient:
     def enabled(self) -> bool:
         return bool(self.api_key and self.voice_id)
 
-    def synthesize(self, text: str) -> bytes:
+    def synthesize(self, text: str, duration_seconds: int | None = None) -> bytes:
         if not self.enabled():
             raise RuntimeError("ElevenLabs client is not configured")
         url = f"{self.base_url}/v1/text-to-speech/{self.voice_id}"
@@ -34,6 +34,13 @@ class ElevenLabsClient:
             "text": text,
             "model_id": self.model_id,
         }
+        if duration_seconds:
+            payload["optimize_streaming_latency"] = 1
+            payload["voice_settings"] = {"stability": 0.5, "similarity_boost": 0.5}
+            payload["timing"] = {
+                "type": "wpm_hint",
+                "words_per_minute": max(80, int(len(text.split()) / max(duration_seconds / 60, 0.5))),
+            }
         headers = {
             "xi-api-key": self.api_key,
             "Content-Type": "application/json",
@@ -51,4 +58,3 @@ class ElevenLabsClient:
                 },
             )
             return audio
-

@@ -9,7 +9,11 @@ from typing import Any, List
 from uuid import UUID, uuid4
 
 import httpx
+from PIL import Image
 from moviepy.editor import AudioFileClip, ColorClip, ImageClip, concatenate_videoclips
+
+if not hasattr(Image, "ANTIALIAS"):
+    Image.ANTIALIAS = Image.LANCZOS
 
 from app.clients.gemini import GeminiClient
 from app.clients.supabase_storage import SupabaseStorageClient

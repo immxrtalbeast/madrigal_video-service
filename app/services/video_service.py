@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import os
+import tempfile
 import time
 from datetime import datetime
 import logging
 from typing import Any, List
 from uuid import UUID, uuid4
+
+import httpx
+from moviepy.editor import AudioFileClip, ColorClip, ImageClip, concatenate_videoclips
 
 from app.clients.gemini import GeminiClient
 from app.clients.supabase_storage import SupabaseStorageClient
@@ -20,6 +25,15 @@ from app.models.domain import (
 )
 from app.queue.queue import BaseQueue
 from app.storage.repository import VideoJobRepository
+
+BACKGROUND_LIBRARY = {
+    "test": [
+        "https://vcrvuyxbdluhgwcyjrvi.supabase.co/storage/v1/object/public/generated-videos/assets/test/2148124dsafasf21.png",
+        "https://vcrvuyxbdluhgwcyjrvi.supabase.co/storage/v1/object/public/generated-videos/assets/test/1749e4d07f58235c6c1507494041046b.jpg",
+        "https://vcrvuyxbdluhgwcyjrvi.supabase.co/storage/v1/object/public/generated-videos/assets/test/4821841208safafwjasdkm123.png",
+        "https://vcrvuyxbdluhgwcyjrvi.supabase.co/storage/v1/object/public/generated-videos/assets/test/bc18c9c2857df848cbb17dcb9f8aca05.jpg",
+    ],
+}
 
 
 class VideoService:
@@ -141,12 +155,17 @@ class VideoService:
         )
         time.sleep(0.05)
 
+        selected_backgrounds = self._select_backgrounds(job)
         self._update_status(job, VideoJobStage.ASSETS, "Preparing visual asset prompts")
         frames_payload = {
             "provider": self.settings.text2img_provider,
             "style": job.style,
             "scenes": storyboard.get("scenes", []),
         }
+        if selected_backgrounds:
+            frames_payload["backgrounds"] = selected_backgrounds
+            for idx, scene in enumerate(frames_payload["scenes"]):
+                scene["background_url"] = selected_backgrounds[idx % len(selected_backgrounds)]
         frames_path = f"{job.assets_folder}/frames.json"
         frames_url = self.storage.upload_json(frames_path, frames_payload)
         self._add_artifact(
@@ -258,7 +277,11 @@ class VideoService:
         self._add_artifact(job, kind="manifest", path=manifest_path, url=manifest_url)
 
         video_path = f"{job.assets_folder}/final.mp4"
-        video_url = self.storage.upload_bytes(video_path, b"", content_type="video/mp4")
+        video_bytes = self._render_video(job, storyboard, selected_backgrounds or [], audio_bytes)
+        if video_bytes:
+            video_url = self.storage.upload_bytes(video_path, video_bytes, content_type="video/mp4")
+        else:
+            video_url = self.storage.upload_bytes(video_path, b"", content_type="video/mp4")
         job.video_url = video_url
         self._add_artifact(
             job,
@@ -336,3 +359,71 @@ class VideoService:
         minutes = (seconds % 3600) // 60
         secs = seconds % 60
         return f"{hours:02}:{minutes:02}:{secs:02},000"
+
+    def _select_backgrounds(self, job: VideoJob) -> list[str] | None:
+        key = (job.template_id or "").lower()
+        return BACKGROUND_LIBRARY.get(key)
+
+    def _render_video(
+        self,
+        job: VideoJob,
+        storyboard: dict[str, Any],
+        backgrounds: list[str],
+        audio_bytes: bytes | None,
+    ) -> bytes | None:
+        scenes = storyboard.get("scenes") or []
+        if not scenes:
+            scenes = [{"duration_seconds": job.duration_seconds, "title": job.idea}]
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                clips = []
+                for idx, scene in enumerate(scenes):
+                    duration = max(1, int(scene.get("duration_seconds") or 5))
+                    bg_path = self._download_background(backgrounds, idx, tmpdir)
+                    if bg_path:
+                        clip = ImageClip(bg_path).set_duration(duration)
+                    else:
+                        clip = ColorClip(size=(1080, 1920), color=(0, 0, 0)).set_duration(duration)
+                    clip = clip.resize(height=1920).set_position("center")
+                    clips.append(clip)
+                video_clip = concatenate_videoclips(clips, method="compose")
+                audio_clip = None
+                if audio_bytes:
+                    audio_path = os.path.join(tmpdir, "voiceover.mp3")
+                    with open(audio_path, "wb") as f:
+                        f.write(audio_bytes)
+                    audio_clip = AudioFileClip(audio_path)
+                    video_clip = video_clip.set_audio(audio_clip)
+                output_path = os.path.join(tmpdir, "final.mp4")
+                video_clip.write_videofile(
+                    output_path,
+                    fps=24,
+                    codec="libx264",
+                    audio_codec="aac",
+                    verbose=False,
+                    logger=None,
+                )
+                for clip in clips:
+                    clip.close()
+                if audio_clip:
+                    audio_clip.close()
+                video_clip.close()
+                with open(output_path, "rb") as f:
+                    return f.read()
+        except Exception as exc:  # pragma: no cover
+            self.log.warning("video render failed", extra={"job_id": str(job.id)}, exc_info=exc)
+        return None
+
+    def _download_background(self, backgrounds: list[str], idx: int, tmpdir: str) -> str | None:
+        if not backgrounds:
+            return None
+        url = backgrounds[idx % len(backgrounds)]
+        try:
+            resp = httpx.get(url, timeout=30.0)
+            resp.raise_for_status()
+            path = os.path.join(tmpdir, f"background_{idx}.png")
+            with open(path, "wb") as f:
+                f.write(resp.content)
+            return path
+        except Exception:  # pragma: no cover
+            return None

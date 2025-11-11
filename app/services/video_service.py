@@ -5,6 +5,7 @@ import tempfile
 import time
 from datetime import datetime
 import logging
+import subprocess
 from typing import Any, List
 from uuid import UUID, uuid4
 
@@ -281,7 +282,13 @@ class VideoService:
         self._add_artifact(job, kind="manifest", path=manifest_path, url=manifest_url)
 
         video_path = f"{job.assets_folder}/final.mp4"
-        video_bytes = self._render_video(job, storyboard, selected_backgrounds or [], audio_bytes)
+        video_bytes = self._render_video(
+            job,
+            storyboard,
+            selected_backgrounds or [],
+            audio_bytes,
+            subtitles_text if subtitles_text.strip() else None,
+        )
         if video_bytes:
             video_url = self.storage.upload_bytes(video_path, video_bytes, content_type="video/mp4")
         else:
@@ -374,6 +381,7 @@ class VideoService:
         storyboard: dict[str, Any],
         backgrounds: list[str],
         audio_bytes: bytes | None,
+        subtitles_text: str | None,
     ) -> bytes | None:
         scenes = storyboard.get("scenes") or []
         if not scenes:
@@ -414,7 +422,37 @@ class VideoService:
                 if audio_clip:
                     audio_clip.close()
                 video_clip.close()
-                with open(output_path, "rb") as f:
+                final_path = output_path
+                if subtitles_text:
+                    subs_path = os.path.join(tmpdir, "subs.srt")
+                    with open(subs_path, "w", encoding="utf-8") as f:
+                        f.write(subtitles_text)
+                    burned_path = os.path.join(tmpdir, "final_with_subs.mp4")
+                    cmd = [
+                        "ffmpeg",
+                        "-y",
+                        "-i",
+                        final_path,
+                        "-vf",
+                        f"subtitles={subs_path}",
+                        "-c:v",
+                        "libx264",
+                        "-pix_fmt",
+                        "yuv420p",
+                        "-c:a",
+                        "copy",
+                        burned_path,
+                    ]
+                    try:
+                        subprocess.run(cmd, check=True, capture_output=True)
+                        final_path = burned_path
+                    except subprocess.CalledProcessError as exc:
+                        self.log.warning(
+                            "ffmpeg burn-in failed",
+                            extra={"job_id": str(job.id)},
+                            exc_info=exc,
+                        )
+                with open(final_path, "rb") as f:
                     return f.read()
         except Exception as exc:  # pragma: no cover
             self.log.warning("video render failed", extra={"job_id": str(job.id)}, exc_info=exc)

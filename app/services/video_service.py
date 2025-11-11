@@ -147,7 +147,7 @@ class VideoService:
             target_audience=job.target_audience,
             style=job.style or self.settings.default_style,
             duration_seconds=job.duration_seconds,
-            target_duration=job.duration_seconds,
+            wpm_hint=130,
         )
         self._update_status(job, VideoJobStage.DRAFTING, "Drafted storyboard via Gemini")
         job.storyboard_summary = storyboard.get("summary")

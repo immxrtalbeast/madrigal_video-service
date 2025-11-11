@@ -384,7 +384,7 @@ class VideoService:
                         clip = ImageClip(bg_path).set_duration(duration)
                     else:
                         clip = ColorClip(size=(1080, 1920), color=(0, 0, 0)).set_duration(duration)
-                    clip = clip.resize(height=1920).set_position("center")
+                    clip = clip.resize(height=1920, method="bicubic").set_position("center")
                     clips.append(clip)
                 video_clip = concatenate_videoclips(clips, method="compose")
                 audio_clip = None

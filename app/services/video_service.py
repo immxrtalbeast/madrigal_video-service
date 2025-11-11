@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import pathlib
 import tempfile
 import time
 from datetime import datetime
@@ -438,13 +439,14 @@ class VideoService:
                     with open(subs_path, "w", encoding="utf-8") as f:
                         f.write(subtitles_text)
                     burned_path = os.path.join(tmpdir, "final_with_subs.mp4")
+                    subs_posix = pathlib.Path(subs_path).as_posix()
                     cmd = [
                         "ffmpeg",
                         "-y",
                         "-i",
                         final_path,
                         "-vf",
-                        f"subtitles={subs_path}",
+                        f"subtitles='{subs_posix}'",
                         "-c:v",
                         "libx264",
                         "-pix_fmt",

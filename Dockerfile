@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl ca-certificates xz-utils libsndfile1 && \
+    apt-get install -y --no-install-recommends curl ca-certificates xz-utils libsndfile1 fontconfig fonts-dejavu-core && \
     rm -rf /var/lib/apt/lists/* && \
     curl -sSL https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -o /tmp/ffmpeg.tar.xz && \
     tar -xJf /tmp/ffmpeg.tar.xz -C /tmp && \

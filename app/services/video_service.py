@@ -284,12 +284,14 @@ class VideoService:
         self._add_artifact(job, kind="manifest", path=manifest_path, url=manifest_url)
 
         video_path = f"{job.assets_folder}/final.mp4"
+        audio_duration = self._get_audio_duration(audio_bytes)
         video_bytes = self._render_video(
             job,
             storyboard,
             selected_backgrounds or [],
             audio_bytes,
             subtitles_text if subtitles_text.strip() else None,
+            audio_duration=audio_duration,
         )
         if video_bytes:
             video_url = self.storage.upload_bytes(video_path, video_bytes, content_type="video/mp4")
@@ -377,6 +379,20 @@ class VideoService:
         key = (job.template_id or "").lower()
         return BACKGROUND_LIBRARY.get(key)
 
+    def _get_audio_duration(self, audio_bytes: bytes | None) -> float | None:
+        if not audio_bytes:
+            return None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+                tmp.write(audio_bytes)
+                tmp_path = tmp.name
+            clip = AudioFileClip(tmp_path)
+            duration = clip.duration
+            clip.close()
+            os.remove(tmp_path)
+            return duration
+        except Exception:
+            return None
     def _render_video(
         self,
         job: VideoJob,
@@ -384,6 +400,7 @@ class VideoService:
         backgrounds: list[str],
         audio_bytes: bytes | None,
         subtitles_text: str | None,
+        audio_duration: float | None,
     ) -> bytes | None:
         scenes = storyboard.get("scenes") or []
         if not scenes:
@@ -411,6 +428,7 @@ class VideoService:
                     clip = clip.resize(newsize=(1080, 1920)).set_position("center")
                     clips.append(clip)
                 video_clip = concatenate_videoclips(clips, method="compose")
+                total_duration = video_clip.duration
                 video_clip = video_clip.set_fps(24)
                 audio_clip = None
                 if audio_bytes:
@@ -419,6 +437,10 @@ class VideoService:
                         f.write(audio_bytes)
                     audio_clip = AudioFileClip(audio_path)
                     video_clip = video_clip.set_audio(audio_clip)
+                    if audio_duration:
+                        total_duration = audio_duration
+                if total_duration and total_duration > 0:
+                    video_clip = video_clip.subclip(0, total_duration)
                 output_path = os.path.join(tmpdir, "final.mp4")
                 video_clip.write_videofile(
                     output_path,

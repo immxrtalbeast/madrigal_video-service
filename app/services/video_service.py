@@ -387,6 +387,16 @@ class VideoService:
         if not scenes:
             scenes = [{"duration_seconds": job.duration_seconds, "title": job.idea}]
         try:
+            self.log.info(
+                "rendering video",
+                extra={
+                    "job_id": str(job.id),
+                    "scenes": len(scenes),
+                    "backgrounds": len(backgrounds),
+                    "has_audio": bool(audio_bytes),
+                    "has_subtitles": bool(subtitles_text),
+                },
+            )
             with tempfile.TemporaryDirectory() as tmpdir:
                 clips = []
                 for idx, scene in enumerate(scenes):
@@ -413,8 +423,8 @@ class VideoService:
                     fps=24,
                     codec="libx264",
                     audio_codec="aac",
-                    verbose=False,
-                    logger=None,
+                    verbose=True,
+                    logger="bar",
                     ffmpeg_params=["-pix_fmt", "yuv420p"],
                 )
                 for clip in clips:
@@ -444,7 +454,7 @@ class VideoService:
                         burned_path,
                     ]
                     try:
-                        subprocess.run(cmd, check=True, capture_output=True)
+                        subprocess.run(cmd, check=True)
                         final_path = burned_path
                     except subprocess.CalledProcessError as exc:
                         self.log.warning(

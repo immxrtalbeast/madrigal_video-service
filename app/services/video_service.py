@@ -391,6 +391,7 @@ class VideoService:
                     clip = clip.resize(height=1920).set_position("center")
                     clips.append(clip)
                 video_clip = concatenate_videoclips(clips, method="compose")
+                video_clip = video_clip.set_fps(24)
                 audio_clip = None
                 if audio_bytes:
                     audio_path = os.path.join(tmpdir, "voiceover.mp3")
@@ -406,6 +407,7 @@ class VideoService:
                     audio_codec="aac",
                     verbose=False,
                     logger=None,
+                    ffmpeg_params=["-pix_fmt", "yuv420p"],
                 )
                 for clip in clips:
                     clip.close()

@@ -502,8 +502,6 @@ class VideoService:
         return assets
 
     def list_shared_media(self, folder: str | None = None) -> list[MediaAsset]:
-
-    def list_shared_media(self, folder: str | None = None) -> list[MediaAsset]:
         prefix = self._compose_shared_prefix(folder)
         try:
             objects = self.storage.list_files(prefix)

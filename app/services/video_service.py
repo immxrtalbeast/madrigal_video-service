@@ -487,6 +487,8 @@ class VideoService:
             key = obj.get("key")
             if not key:
                 continue
+            if key.rstrip().endswith("/"):
+                continue
             assets.append(
                 MediaAsset(
                     key=key,
@@ -576,7 +578,13 @@ class VideoService:
                 objects = self.storage.list_files(prefix_path)
             except ValueError:
                 continue
-            urls = [obj.get("url") for obj in objects if obj.get("url")]
+            urls = [
+                obj.get("url")
+                for obj in objects
+                if obj.get("url")
+                and obj.get("key")
+                and not obj["key"].rstrip().endswith("/")
+            ]
             if urls:
                 return urls
         key = (job.template_id or "").lower()

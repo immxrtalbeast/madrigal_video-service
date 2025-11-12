@@ -58,6 +58,8 @@ class SupabaseStorageClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": content_type,
         }
+        if overwrite:
+            headers["x-upsert"] = "true"
         params = {"upsert": "true"} if overwrite else None
         with httpx.Client(timeout=self.timeout) as client:
             response = client.post(url, headers=headers, params=params, content=content)

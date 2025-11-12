@@ -41,11 +41,11 @@ from app.storage.repository import VideoJobRepository
 
 BACKGROUND_LIBRARY = {
     "test": [
-        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/test/07d47b1443cf8ec_big.jpg",
-        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/test/d3b67dbf5b0f4547a7d9d1704f1e5ecf.jpg",
-        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/test/dadwa288da21dap.png",
-        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/test/dwadzxczf1ff31fasf.png",
-        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/test/xczsidaid124.png",
+        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/shared/test/07d47b1443cf8ec_big.jpg",
+        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/shared/test/d3b67dbf5b0f4547a7d9d1704f1e5ecf.jpg",
+        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/shared/test/dadwa288da21dap.png",
+        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/shared/test/dwadzxczf1ff31fasf.png",
+        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/shared/test/xczsidaid124.png",
     ],
 }
 
@@ -242,7 +242,7 @@ class VideoService:
         return job
 
     def _run_post_draft(self, job: VideoJob, storyboard: dict[str, Any]) -> None:
-        selected_backgrounds = self._select_backgrounds(job)
+        selected_backgrounds = self._select_backgrounds(job, storyboard)
         self._update_status(job, VideoJobStage.ASSETS, "Preparing visual asset prompts")
         frames_payload = {
             "provider": self.settings.text2img_provider,
@@ -251,8 +251,8 @@ class VideoService:
         }
         if selected_backgrounds:
             frames_payload["backgrounds"] = selected_backgrounds
-            for idx, scene in enumerate(frames_payload["scenes"]):
-                scene["background_url"] = selected_backgrounds[idx % len(selected_backgrounds)]
+                for idx, scene in enumerate(frames_payload["scenes"]):
+                    scene["background_url"] = scene.get("background_url") or selected_backgrounds[idx % len(selected_backgrounds)]
         frames_path = f"{job.assets_folder}/frames.json"
         frames_url = self.storage.upload_json(frames_path, frames_payload)
         self._add_artifact(
@@ -400,7 +400,7 @@ class VideoService:
         manifest_url = self.storage.upload_json(manifest_path, manifest)
         self._add_artifact(job, kind="manifest", path=manifest_path, url=manifest_url)
 
-        selected_backgrounds = self._select_backgrounds(job)
+        selected_backgrounds = self._select_backgrounds(job, storyboard)
         audio_bytes = self._load_voiceover_audio(job)
         subtitles_text = self._load_subtitles_text(job)
         video_path = f"{job.assets_folder}/final.mp4"
@@ -612,7 +612,8 @@ class VideoService:
         secs = seconds % 60
         return f"{hours:02}:{minutes:02}:{secs:02},000"
 
-    def _select_backgrounds(self, job: VideoJob) -> list[str]:
+    def _select_backgrounds(self, job: VideoJob, storyboard: dict[str, Any]) -> list[str]:
+        auto_urls: list[str] = []
         prefixes: list[str] = []
         if job.template_id:
             prefixes.append(job.template_id)
@@ -631,9 +632,12 @@ class VideoService:
                 if obj.get("url") and obj.get("key") and self._is_image_asset(obj["key"])
             ]
             if urls:
-                return urls
-        key = (job.template_id or "").lower()
-        return BACKGROUND_LIBRARY.get(key) or BACKGROUND_LIBRARY.get("test") or []
+                auto_urls = urls
+                break
+        if not auto_urls:
+            key = (job.template_id or "").lower()
+            auto_urls = BACKGROUND_LIBRARY.get(key) or BACKGROUND_LIBRARY.get("test") or []
+        return auto_urls
 
     def _get_audio_duration(self, audio_bytes: bytes | None) -> float | None:
         if not audio_bytes:
@@ -702,7 +706,8 @@ class VideoService:
                 clips = []
                 for idx, scene in enumerate(scenes):
                     duration = max(1, int(scene.get("duration_seconds") or 5))
-                    bg_path = self._download_background(backgrounds, idx, tmpdir)
+                    preferred_url = scene.get("background_url")
+                    bg_path = self._download_background(backgrounds, idx, tmpdir, preferred_url)
                     if bg_path:
                         clip = ImageClip(bg_path).set_duration(duration)
                     else:
@@ -775,17 +780,33 @@ class VideoService:
             self.log.warning("video render failed", extra={"job_id": str(job.id)}, exc_info=exc)
         return None
 
-    def _download_background(self, backgrounds: list[str], idx: int, tmpdir: str) -> str | None:
-        if not backgrounds:
-            return None
-        url = backgrounds[idx % len(backgrounds)]
+    def _download_background(
+        self,
+        backgrounds: list[str],
+        idx: int,
+        tmpdir: str,
+        preferred_url: str | None = None,
+    ) -> str | None:
+        url_candidates: list[str] = []
+        if preferred_url:
+            url_candidates.append(preferred_url)
+        if backgrounds:
+            url_candidates.append(backgrounds[idx % len(backgrounds)])
+        for url in url_candidates:
+            if not url:
+                continue
+            try:
+                resp = httpx.get(url, timeout=30.0)
+                resp.raise_for_status()
+                suffix = pathlib.Path(url).suffix or ".png"
+                path = os.path.join(tmpdir, f"background_{idx}{suffix}")
+                with open(path, "wb") as f:
+                    f.write(resp.content)
+                return path
+            except Exception:  # pragma: no cover
+                continue
         try:
-            resp = httpx.get(url, timeout=30.0)
-            resp.raise_for_status()
-            path = os.path.join(tmpdir, f"background_{idx}.png")
-            with open(path, "wb") as f:
-                f.write(resp.content)
-            return path
+            return None
         except Exception:  # pragma: no cover
             return None
 

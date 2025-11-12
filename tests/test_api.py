@@ -72,12 +72,14 @@ def test_media_upload_and_list():
         "content_type": "text/plain",
         "data": base64.b64encode(b"demo-content").decode("ascii"),
     }
-    upload_resp = client.post("/media", json=payload)
+    headers = {"X-User-ID": "tester"}
+    upload_resp = client.post("/media", json=payload, headers=headers)
     assert upload_resp.status_code == 201
     asset = upload_resp.json()["asset"]
     assert asset["key"].endswith("demo.txt")
+    assert "tester" in asset["key"]
 
-    list_resp = client.get("/media", params={"folder": "test"})
+    list_resp = client.get("/media", params={"folder": "test"}, headers=headers)
     assert list_resp.status_code == 200
     items = list_resp.json()["items"]
     assert any(item["key"].endswith("demo.txt") for item in items)

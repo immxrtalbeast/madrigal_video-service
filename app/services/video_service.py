@@ -460,6 +460,7 @@ class VideoService:
         filename: str | None,
         data: bytes,
         *,
+        user_id: str,
         content_type: str | None = None,
     ) -> MediaAsset:
         if not folder or not folder.strip():
@@ -467,7 +468,7 @@ class VideoService:
         safe_name = pathlib.PurePosixPath(filename or "").name
         if not safe_name:
             safe_name = f"asset-{uuid4().hex}"
-        prefix = self._compose_media_prefix(folder)
+        prefix = self._user_media_prefix(folder, user_id)
         key = "/".join(part for part in (prefix, safe_name) if part)
         url = self.storage.upload_bytes(
             key,
@@ -476,8 +477,8 @@ class VideoService:
         )
         return MediaAsset(key=key, url=url, size=len(data))
 
-    def list_media(self, folder: str | None = None) -> list[MediaAsset]:
-        prefix = self._compose_media_prefix(folder)
+    def list_media(self, folder: str | None, user_id: str) -> list[MediaAsset]:
+        prefix = self._user_media_prefix(folder or "", user_id)
         try:
             objects = self.storage.list_files(prefix)
         except ValueError as exc:
@@ -513,10 +514,23 @@ class VideoService:
         parts = [segment for segment in (root_segment, folder_segment) if segment]
         return "/".join(parts)
 
+    def _user_media_prefix(self, folder: str, user_id: str) -> str:
+        folder_segment = self._normalize_storage_segment(folder)
+        user_segment = self._normalize_storage_segment(user_id)
+        root_segment = self._normalize_storage_segment(self.settings.media_root_prefix)
+        parts = [segment for segment in (root_segment, user_segment, folder_segment) if segment]
+        return "/".join(parts)
+
     def _normalize_storage_segment(self, value: str | None) -> str:
         if not value:
             return ""
-        return "/".join(part for part in value.strip().split("/") if part)
+        cleaned: list[str] = []
+        for part in value.strip().split("/"):
+            part = part.strip()
+            if not part or part in (".", ".."):
+                continue
+            cleaned.append(part)
+        return "/".join(cleaned)
 
     def _is_image_asset(self, key: str) -> bool:
         if not key or key.rstrip().endswith("/"):

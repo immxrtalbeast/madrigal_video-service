@@ -5,7 +5,7 @@ import binascii
 import logging
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 
 from app.config import Settings, get_settings
 from app.models.api import (
@@ -117,6 +117,7 @@ def approve_subtitles(
 @app.post("/media", response_model=MediaUploadResponse, status_code=status.HTTP_201_CREATED)
 def upload_media(
     payload: MediaUploadRequest,
+    user_id: str = Depends(require_user_id),
     service: VideoService = Depends(get_video_service),
 ) -> MediaUploadResponse:
     try:
@@ -128,6 +129,7 @@ def upload_media(
             folder=payload.folder,
             filename=payload.filename,
             data=data,
+            user_id=user_id,
             content_type=payload.content_type,
         )
     except ValueError as exc:
@@ -141,10 +143,15 @@ def list_media(
         default=None,
         description="Путь внутри бакета (например assets/test). Оставьте пустым для корня.",
     ),
+    user_id: str = Depends(require_user_id),
     service: VideoService = Depends(get_video_service),
 ) -> MediaListResponse:
     try:
-        items = service.list_media(folder)
+        items = service.list_media(folder, user_id=user_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return MediaListResponse(items=items)
+def require_user_id(x_user_id: str = Header(default=None, alias="X-User-ID")) -> str:
+    if not x_user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="X-User-ID header required")
+    return x_user_id

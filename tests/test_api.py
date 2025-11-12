@@ -83,3 +83,16 @@ def test_media_upload_and_list():
     assert list_resp.status_code == 200
     items = list_resp.json()["items"]
     assert any(item["key"].endswith("demo.txt") for item in items)
+
+
+def test_shared_media_listing():
+    from app.main import get_video_service  # lazy import to reuse singleton
+
+    service = get_video_service()
+    shared_path = f"{service.settings.shared_media_prefix}/test/demo-shared.txt"
+    service.storage.upload_text(shared_path, "shared-content", content_type="text/plain")
+
+    resp = client.get("/media/shared", params={"folder": "test"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert any(item["key"].endswith("demo-shared.txt") for item in data["items"])

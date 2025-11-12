@@ -500,6 +500,27 @@ class VideoService:
             )
         return assets
 
+    def list_shared_media(self, folder: str | None = None) -> list[MediaAsset]:
+        prefix = self._compose_shared_prefix(folder)
+        try:
+            objects = self.storage.list_files(prefix)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        assets: list[MediaAsset] = []
+        for obj in objects:
+            key = obj.get("key")
+            if not key or key.rstrip().endswith("/"):
+                continue
+            assets.append(
+                MediaAsset(
+                    key=key,
+                    url=obj.get("url", ""),
+                    size=obj.get("size"),
+                    last_modified=obj.get("last_modified"),
+                )
+            )
+        return assets
+
     def _build_assets_folder(self) -> str:
         timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
         prefix = self.settings.storage_folder_prefix.strip("/")
@@ -519,6 +540,12 @@ class VideoService:
         user_segment = self._normalize_storage_segment(user_id)
         root_segment = self._normalize_storage_segment(self.settings.media_root_prefix)
         parts = [segment for segment in (root_segment, user_segment, folder_segment) if segment]
+        return "/".join(parts)
+
+    def _compose_shared_prefix(self, folder: str | None) -> str:
+        shared_root = self._normalize_storage_segment(self.settings.shared_media_prefix)
+        folder_segment = self._normalize_storage_segment(folder)
+        parts = [segment for segment in (shared_root, folder_segment) if segment]
         return "/".join(parts)
 
     def _normalize_storage_segment(self, value: str | None) -> str:

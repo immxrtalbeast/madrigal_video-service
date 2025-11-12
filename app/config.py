@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     storage_folder_prefix: str = "jobs"
     media_root_prefix: str = ""
     default_background_folder: str = "assets/test"
+    shared_media_prefix: str = "assets/shared"
 
     # Generation provider preferences
     text2img_provider: str = "imagen"

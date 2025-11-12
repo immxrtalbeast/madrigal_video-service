@@ -142,8 +142,23 @@ class VideoService:
 
     def _pipeline(self, job: VideoJob) -> None:
         try:
-            storyboard = self._generate_storyboard(job)
-            self._await_draft_review(job, storyboard)
+            if job.stage in (VideoJobStage.QUEUED, VideoJobStage.DRAFTING):
+                storyboard = self._generate_storyboard(job)
+                self._await_draft_review(job, storyboard)
+                return
+            if job.stage == VideoJobStage.DRAFT_REVIEW:
+                storyboard = {
+                    "summary": job.storyboard_summary or job.idea,
+                    "scenes": job.storyboard or [],
+                }
+                if not storyboard["scenes"]:
+                    raise ValueError("missing storyboard scenes for continuation")
+                self._run_post_draft(job, storyboard)
+                return
+            self.log.debug(
+                "pipeline invocation skipped",
+                extra={"job_id": str(job.id), "stage": job.stage.value},
+            )
         except Exception as exc:  # pragma: no cover
             self._update_status(job, VideoJobStage.FAILED, "Video generation failed", error=str(exc))
 
@@ -184,8 +199,11 @@ class VideoService:
         job.storyboard_summary = storyboard.get("summary")
         storyboard_path = f"{job.assets_folder}/storyboard.json"
         self.storage.upload_json(storyboard_path, storyboard)
-        self.repo.save(job)
-        self._run_post_draft(job, storyboard)
+        self._update_status(job, VideoJobStage.DRAFT_REVIEW, "Storyboard approved. Queued for asset build-out")
+        if self.queue is not None:
+            self.queue.enqueue(job.id)
+        else:  # pragma: no cover - fallback for misconfiguration
+            self._run_post_draft(job, storyboard)
         return job
 
     def _run_post_draft(self, job: VideoJob, storyboard: dict[str, Any]) -> None:

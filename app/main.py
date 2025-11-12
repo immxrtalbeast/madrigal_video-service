@@ -8,6 +8,7 @@ from fastapi import Depends, FastAPI, HTTPException, status
 
 from app.config import Settings, get_settings
 from app.models.api import (
+    DraftApprovalRequest,
     IdeaExpansionRequest,
     IdeaExpansionResponse,
     VideoGenerationRequest,
@@ -80,3 +81,16 @@ def expand_idea(
 ) -> IdeaExpansionResponse:
     result = service.expand_idea(payload)
     return IdeaExpansionResponse(**result)
+
+
+@app.post("/videos/{job_id}/draft:approve", response_model=VideoJobResponse)
+def approve_draft(
+    job_id: UUID,
+    payload: DraftApprovalRequest,
+    service: VideoService = Depends(get_video_service),
+) -> VideoJobResponse:
+    try:
+        job = service.approve_draft(job_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return VideoJobResponse(job=job)

@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 class VideoJobStage(str, Enum):
     QUEUED = "queued"
     DRAFTING = "drafting"
+    DRAFT_REVIEW = "draft_review"
     ASSETS = "assets"
     AUDIO = "audio"
     RENDERING = "rendering"
@@ -51,5 +52,6 @@ class VideoJob(BaseModel):
     subtitles_url: Optional[str]
     video_url: Optional[str]
     error: Optional[str]
+    storyboard: Optional[List[dict[str, Any]]] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

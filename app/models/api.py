@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, validator
 
@@ -36,6 +36,21 @@ class VideoJobResponse(BaseModel):
 
 class VideoJobListResponse(BaseModel):
     items: List[VideoJob]
+
+
+class ScenePayload(BaseModel):
+    position: Optional[int] = None
+    title: Optional[str] = None
+    focus: Optional[str] = None
+    voiceover: Optional[str] = None
+    visual: Optional[str] = None
+    duration_seconds: Optional[int] = None
+    background_url: Optional[str] = None
+
+
+class DraftApprovalRequest(BaseModel):
+    summary: Optional[str] = None
+    scenes: List[ScenePayload]
 
 
 class IdeaExpansionRequest(BaseModel):

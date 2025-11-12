@@ -22,7 +22,7 @@ from app.clients.supabase_storage import SupabaseStorageClient
 from app.clients.tts import ElevenLabsClient
 from app.clients.whisper import LocalWhisperClient
 from app.config import Settings
-from app.models.api import IdeaExpansionRequest, VideoGenerationRequest
+from app.models.api import DraftApprovalRequest, IdeaExpansionRequest, VideoGenerationRequest
 from app.models.domain import (
     VideoJob,
     VideoJobArtifact,
@@ -141,13 +141,20 @@ class VideoService:
         return {"summary": summary}
 
     def _pipeline(self, job: VideoJob) -> None:
+        try:
+            storyboard = self._generate_storyboard(job)
+            self._await_draft_review(job, storyboard)
+        except Exception as exc:  # pragma: no cover
+            self._update_status(job, VideoJobStage.FAILED, "Video generation failed", error=str(exc))
+
+    def _generate_storyboard(self, job: VideoJob) -> dict[str, Any]:
         self.log.debug("starting storyboard drafting", extra={"job_id": str(job.id)})
         storyboard = self.gemini.generate_storyboard(
             idea=job.idea,
             target_audience=job.target_audience,
             style=job.style or self.settings.default_style,
             duration_seconds=job.duration_seconds,
-            wpm_hint=130,
+            wpm_hint=160,
         )
         self._update_status(job, VideoJobStage.DRAFTING, "Drafted storyboard via Gemini")
         job.storyboard_summary = storyboard.get("summary")
@@ -161,7 +168,27 @@ class VideoService:
             metadata={"model": self.settings.gemini_model},
         )
         time.sleep(0.05)
+        return storyboard
 
+    def _await_draft_review(self, job: VideoJob, storyboard: dict[str, Any]) -> None:
+        job.storyboard = storyboard.get("scenes", [])
+        job.storyboard_summary = storyboard.get("summary")
+        self._update_status(job, VideoJobStage.DRAFT_REVIEW, "Awaiting storyboard approval")
+
+    def approve_draft(self, job_id: UUID, payload: DraftApprovalRequest) -> VideoJob:
+        job = self.get_job(job_id)
+        if job.stage != VideoJobStage.DRAFT_REVIEW:
+            raise ValueError("draft stage is not awaiting approval")
+        storyboard = self._merge_storyboard(job, payload)
+        job.storyboard = storyboard.get("scenes", [])
+        job.storyboard_summary = storyboard.get("summary")
+        storyboard_path = f"{job.assets_folder}/storyboard.json"
+        self.storage.upload_json(storyboard_path, storyboard)
+        self.repo.save(job)
+        self._run_post_draft(job, storyboard)
+        return job
+
+    def _run_post_draft(self, job: VideoJob, storyboard: dict[str, Any]) -> None:
         selected_backgrounds = self._select_backgrounds(job)
         self._update_status(job, VideoJobStage.ASSETS, "Preparing visual asset prompts")
         frames_payload = {
@@ -506,3 +533,21 @@ class VideoService:
             return path
         except Exception:  # pragma: no cover
             return None
+
+    def _merge_storyboard(self, job: VideoJob, payload: DraftApprovalRequest) -> dict[str, Any]:
+        scenes_input = payload.scenes or []
+        if not scenes_input and not job.storyboard:
+            raise ValueError("no scenes provided for storyboard approval")
+        scenes: list[dict[str, Any]] = []
+        source = scenes_input or job.storyboard or []
+        for idx, scene in enumerate(source, start=1):
+            if hasattr(scene, "model_dump"):
+                data = scene.model_dump(exclude_none=True)  # type: ignore[attr-defined]
+            else:
+                data = dict(scene)
+            data["position"] = data.get("position") or idx
+            if not data.get("duration_seconds"):
+                data["duration_seconds"] = 5
+            scenes.append(data)
+        summary = payload.summary or job.storyboard_summary or job.idea
+        return {"summary": summary, "scenes": scenes}

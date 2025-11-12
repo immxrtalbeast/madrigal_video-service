@@ -15,6 +15,7 @@ from app.models.api import (
     MediaListResponse,
     MediaUploadRequest,
     MediaUploadResponse,
+    SubtitlesApprovalRequest,
     VideoGenerationRequest,
     VideoJobListResponse,
     VideoJobResponse,
@@ -95,6 +96,19 @@ def approve_draft(
 ) -> VideoJobResponse:
     try:
         job = service.approve_draft(job_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return VideoJobResponse(job=job)
+
+
+@app.post("/videos/{job_id}/subtitles:approve", response_model=VideoJobResponse)
+def approve_subtitles(
+    job_id: UUID,
+    payload: SubtitlesApprovalRequest,
+    service: VideoService = Depends(get_video_service),
+) -> VideoJobResponse:
+    try:
+        job = service.approve_subtitles(job_id, payload)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return VideoJobResponse(job=job)

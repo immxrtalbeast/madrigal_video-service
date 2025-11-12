@@ -30,8 +30,25 @@ def test_video_flow_with_local_queue():
     approve_resp = client.post(f"/videos/{job_id}/draft:approve", json=approval_payload)
     assert approve_resp.status_code == 200
 
+    subtitles_text = None
+    for _ in range(40):
+        status_resp = client.get(f"/videos/{job_id}")
+        assert status_resp.status_code == 200
+        job_payload = status_resp.json()["job"]
+        if job_payload["stage"] == "subtitle_review":
+            subtitles_text = job_payload.get("subtitles_text") or "Fallback subtitle"
+            break
+        time.sleep(0.05)
+    assert subtitles_text is not None
+
+    subs_resp = client.post(
+        f"/videos/{job_id}/subtitles:approve",
+        json={"text": subtitles_text},
+    )
+    assert subs_resp.status_code == 200
+
     status = None
-    for _ in range(10):
+    for _ in range(40):
         status_resp = client.get(f"/videos/{job_id}")
         assert status_resp.status_code == 200
         status = status_resp.json()["job"]["status"]

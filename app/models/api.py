@@ -95,3 +95,7 @@ class MediaUploadRequest(BaseModel):
     filename: Optional[str] = None
     content_type: Optional[str] = None
     data: str
+
+
+class SubtitlesApprovalRequest(BaseModel):
+    text: str

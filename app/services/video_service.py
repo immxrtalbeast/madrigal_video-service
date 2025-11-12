@@ -26,6 +26,7 @@ from app.models.api import (
     DraftApprovalRequest,
     IdeaExpansionRequest,
     MediaAsset,
+    SubtitlesApprovalRequest,
     VideoGenerationRequest,
 )
 from app.models.domain import (
@@ -126,6 +127,7 @@ class VideoService:
             voice_profile=payload.voice_profile or self.settings.tts_voice,
             soundtrack=payload.soundtrack or self.settings.backing_track,
             subtitles_url=None,
+            subtitles_text=None,
             video_url=None,
             error=None,
         )
@@ -178,6 +180,15 @@ class VideoService:
                 if not storyboard["scenes"]:
                     raise ValueError("missing storyboard scenes for continuation")
                 self._run_post_draft(job, storyboard)
+                return
+            if job.stage == VideoJobStage.SUBTITLE_REVIEW:
+                storyboard = {
+                    "summary": job.storyboard_summary or job.idea,
+                    "scenes": job.storyboard or [],
+                }
+                if not storyboard["scenes"]:
+                    raise ValueError("missing storyboard scenes for continuation")
+                self._finalize_video(job, storyboard)
                 return
             self.log.debug(
                 "pipeline invocation skipped",
@@ -332,6 +343,7 @@ class VideoService:
             content_type="application/x-subrip; charset=utf-8",
         )
         job.subtitles_url = subtitles_url
+        job.subtitles_text = subtitles_text
         self._add_artifact(
             job,
             kind="subtitles",
@@ -341,6 +353,42 @@ class VideoService:
         )
         time.sleep(0.05)
 
+        self._update_status(job, VideoJobStage.SUBTITLE_REVIEW, "Awaiting subtitle approval")
+
+    def approve_subtitles(self, job_id: UUID, payload: SubtitlesApprovalRequest) -> VideoJob:
+        job = self.get_job(job_id)
+        if job.stage != VideoJobStage.SUBTITLE_REVIEW:
+            raise ValueError("subtitles are not awaiting approval")
+        text = payload.text.strip()
+        if not text:
+            raise ValueError("subtitles text cannot be empty")
+        subtitles_path = f"{job.assets_folder}/subtitles.srt"
+        subtitles_url = self.storage.upload_text(
+            subtitles_path,
+            text,
+            content_type="application/x-subrip; charset=utf-8",
+        )
+        job.subtitles_text = text
+        job.subtitles_url = subtitles_url
+        artifact = self._find_artifact(job, "subtitles")
+        if artifact:
+            artifact.path = subtitles_path
+            artifact.url = subtitles_url
+        else:
+            self._add_artifact(job, kind="subtitles", path=subtitles_path, url=subtitles_url)
+        self.repo.save(job)
+        self._update_status(job, VideoJobStage.SUBTITLE_REVIEW, "Subtitles approved. Queued for rendering")
+        if self.queue is not None:
+            self.queue.enqueue(job.id)
+        else:  # pragma: no cover
+            storyboard = {
+                "summary": job.storyboard_summary or job.idea,
+                "scenes": job.storyboard or [],
+            }
+            self._finalize_video(job, storyboard)
+        return job
+
+    def _finalize_video(self, job: VideoJob, storyboard: dict[str, Any]) -> None:
         self._update_status(job, VideoJobStage.RENDERING, "Building final reel manifest")
         manifest = {
             "idea": job.idea,
@@ -352,6 +400,9 @@ class VideoService:
         manifest_url = self.storage.upload_json(manifest_path, manifest)
         self._add_artifact(job, kind="manifest", path=manifest_path, url=manifest_url)
 
+        selected_backgrounds = self._select_backgrounds(job)
+        audio_bytes = self._load_voiceover_audio(job)
+        subtitles_text = self._load_subtitles_text(job)
         video_path = f"{job.assets_folder}/final.mp4"
         audio_duration = self._get_audio_duration(audio_bytes)
         video_bytes = self._render_video(
@@ -545,6 +596,32 @@ class VideoService:
             return duration
         except Exception:
             return None
+
+    def _find_artifact(self, job: VideoJob, kind: str) -> VideoJobArtifact | None:
+        for artifact in job.artifacts:
+            if artifact.kind == kind:
+                return artifact
+        return None
+
+    def _load_voiceover_audio(self, job: VideoJob) -> bytes | None:
+        artifact = self._find_artifact(job, "voiceover")
+        if not artifact or not artifact.path:
+            return None
+        try:
+            return self.storage.download_bytes(artifact.path)
+        except ValueError:
+            return None
+
+    def _load_subtitles_text(self, job: VideoJob) -> str:
+        if job.subtitles_text:
+            return job.subtitles_text
+        artifact = self._find_artifact(job, "subtitles")
+        if artifact and artifact.path:
+            try:
+                return self.storage.download_bytes(artifact.path).decode("utf-8")
+            except ValueError:
+                return ""
+        return ""
     def _render_video(
         self,
         job: VideoJob,

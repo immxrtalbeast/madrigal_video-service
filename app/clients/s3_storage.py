@@ -105,6 +105,21 @@ class S3StorageClient:
             continuation_token = response.get("NextContinuationToken")
         return contents
 
+    def download_bytes(self, path: str) -> bytes:
+        key = self._normalize_path(path)
+        if not self.is_configured() or self._client is None:
+            if key not in self._memory:
+                raise ValueError("object not found in memory storage")
+            return self._memory[key]
+        try:
+            response = self._client.get_object(Bucket=self.bucket, Key=key)
+            body = response.get("Body")
+            if body is None:
+                return b""
+            return body.read()
+        except (BotoCoreError, ClientError) as exc:  # pragma: no cover
+            raise ValueError(f"S3 download failed: {exc}") from exc
+
     def public_url(self, path: str) -> str:
         clean = self._normalize_path(path)
         if self.public_url_base:

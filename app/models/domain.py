@@ -14,6 +14,7 @@ class VideoJobStage(str, Enum):
     DRAFT_REVIEW = "draft_review"
     ASSETS = "assets"
     AUDIO = "audio"
+    SUBTITLE_REVIEW = "subtitle_review"
     RENDERING = "rendering"
     READY = "ready"
     FAILED = "failed"
@@ -50,6 +51,7 @@ class VideoJob(BaseModel):
     voice_profile: Optional[str]
     soundtrack: Optional[str]
     subtitles_url: Optional[str]
+    subtitles_text: Optional[str]
     video_url: Optional[str]
     error: Optional[str]
     storyboard: Optional[List[dict[str, Any]]] = Field(default=None)

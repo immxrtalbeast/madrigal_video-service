@@ -251,8 +251,8 @@ class VideoService:
         }
         if selected_backgrounds:
             frames_payload["backgrounds"] = selected_backgrounds
-                for idx, scene in enumerate(frames_payload["scenes"]):
-                    scene["background_url"] = scene.get("background_url") or selected_backgrounds[idx % len(selected_backgrounds)]
+            for idx, scene in enumerate(frames_payload["scenes"]):
+                scene["background_url"] = scene.get("background_url") or selected_backgrounds[idx % len(selected_backgrounds)]
         frames_path = f"{job.assets_folder}/frames.json"
         frames_url = self.storage.upload_json(frames_path, frames_payload)
         self._add_artifact(

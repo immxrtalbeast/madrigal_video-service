@@ -25,14 +25,28 @@ class SupabaseStorageClient:
     def is_configured(self) -> bool:
         return bool(self.api_url and self.api_key)
 
-    def upload_text(self, path: str, text: str, content_type: str = "text/plain; charset=utf-8") -> str:
-        return self.upload_bytes(path, text.encode("utf-8"), content_type)
+    def upload_text(
+        self,
+        path: str,
+        text: str,
+        content_type: str = "text/plain; charset=utf-8",
+        *,
+        overwrite: bool = True,
+    ) -> str:
+        return self.upload_bytes(path, text.encode("utf-8"), content_type, overwrite=overwrite)
 
-    def upload_json(self, path: str, payload: dict[str, Any]) -> str:
+    def upload_json(self, path: str, payload: dict[str, Any], *, overwrite: bool = True) -> str:
         body = json.dumps(payload, ensure_ascii=False, indent=2)
-        return self.upload_text(path, body, content_type="application/json")
+        return self.upload_text(path, body, content_type="application/json", overwrite=overwrite)
 
-    def upload_bytes(self, path: str, content: bytes, content_type: str = "application/octet-stream") -> str:
+    def upload_bytes(
+        self,
+        path: str,
+        content: bytes,
+        content_type: str = "application/octet-stream",
+        *,
+        overwrite: bool = True,
+    ) -> str:
         object_path = self._normalize_path(path)
         if not self.is_configured():
             self._memory[object_path] = content
@@ -44,8 +58,9 @@ class SupabaseStorageClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": content_type,
         }
+        params = {"upsert": "true"} if overwrite else None
         with httpx.Client(timeout=self.timeout) as client:
-            response = client.post(url, headers=headers, content=content)
+            response = client.post(url, headers=headers, params=params, content=content)
             if response.status_code not in (200, 201):
                 raise ValueError(f"Supabase upload failed: {response.status_code} {response.text}")
         return self.public_url(object_path)

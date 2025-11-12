@@ -518,6 +518,12 @@ class VideoService:
             return ""
         return "/".join(part for part in value.strip().split("/") if part)
 
+    def _is_image_asset(self, key: str) -> bool:
+        if not key or key.rstrip().endswith("/"):
+            return False
+        lowered = key.lower()
+        return lowered.endswith((".png", ".jpg", ".jpeg", ".webp"))
+
     def _add_artifact(
         self,
         job: VideoJob,
@@ -581,9 +587,7 @@ class VideoService:
             urls = [
                 obj.get("url")
                 for obj in objects
-                if obj.get("url")
-                and obj.get("key")
-                and not obj["key"].rstrip().endswith("/")
+                if obj.get("url") and obj.get("key") and self._is_image_asset(obj["key"])
             ]
             if urls:
                 return urls

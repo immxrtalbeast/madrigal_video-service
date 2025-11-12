@@ -524,14 +524,26 @@ class VideoService:
 
     def list_voices(self) -> list[dict[str, str]]:
         if self.voice_catalog:
-            return self.voice_catalog
+            normalized: list[dict[str, str]] = []
+            for entry in self.voice_catalog:
+                voice_id = entry.get("voice_id") or entry.get("id")
+                if not voice_id:
+                    continue
+                normalized.append(
+                    {
+                        "voice_id": voice_id,
+                        "name": entry.get("name"),
+                        "description": entry.get("description"),
+                        "preview_url": entry.get("preview_url") or entry.get("url"),
+                    }
+                )
+            return normalized
         if self.settings.elevenlabs_voice_id:
             return [
                 {
-                    "id": self.settings.elevenlabs_voice_id,
+                    "voice_id": self.settings.elevenlabs_voice_id,
                     "name": "Default voice",
                     "description": "Configured voice from settings",
-                    "is_public": False,
                 }
             ]
         return []

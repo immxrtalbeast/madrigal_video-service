@@ -103,14 +103,10 @@ class SubtitlesApprovalRequest(BaseModel):
 
 
 class VoiceInfo(BaseModel):
-    id: str
-    name: str
+    voice_id: str
+    name: Optional[str] = None
     description: Optional[str] = None
-    url: Optional[str] = None
-    preview: Optional[str] = None
-    low_volume: Optional[str] = None
-    author: Optional[str] = None
-    is_public: Optional[bool] = None
+    preview_url: Optional[str] = None
 
 
 class VoiceListResponse(BaseModel):

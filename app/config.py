@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     kafka_enabled: bool = False
     kafka_bootstrap_servers: str = "localhost:9092"
     kafka_topic: str = "video_jobs"
+    kafka_updates_topic: str = "video_updates"
     kafka_group_id: str = "video-service-consumer"
 
     # Supabase storage (S3-compatible) configuration

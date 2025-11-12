@@ -29,6 +29,7 @@ from app.models.domain import (
     VideoJobStage,
     VideoJobStatusHistory,
 )
+from app.events.publisher import JobEventPublisher
 from app.queue.queue import BaseQueue
 from app.storage.repository import VideoJobRepository
 
@@ -74,6 +75,20 @@ class VideoService:
             bucket=settings.supabase_bucket,
             api_key=settings.supabase_api_key,
         )
+        self.events: JobEventPublisher | None = None
+        if settings.kafka_enabled and settings.kafka_updates_topic:
+            try:
+                self.events = JobEventPublisher(
+                    bootstrap_servers=settings.kafka_bootstrap_servers,
+                    topic=settings.kafka_updates_topic,
+                    logger=self.log,
+                )
+            except Exception:  # pragma: no cover - best effort logging
+                self.log.warning(
+                    "job event publisher unavailable",
+                    extra={"topic": settings.kafka_updates_topic},
+                    exc_info=True,
+                )
 
     def bind_queue(self, queue: BaseQueue) -> None:
         self.queue = queue
@@ -109,6 +124,7 @@ class VideoService:
         self.repo.save(job)
         if self.queue is not None:
             self.queue.enqueue(job.id)
+        self._emit_job_update(job)
         return job
 
     def get_job(self, job_id: UUID) -> VideoJob:
@@ -377,6 +393,7 @@ class VideoService:
         if error:
             job.error = error
         self.repo.save(job)
+        self._emit_job_update(job)
 
     def _build_assets_folder(self) -> str:
         timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
@@ -398,7 +415,16 @@ class VideoService:
         )
         job.artifacts.append(artifact)
         self.repo.save(job)
+        self._emit_job_update(job)
         return artifact
+
+    def _emit_job_update(self, job: VideoJob) -> None:
+        if not self.events:
+            return
+        try:
+            self.events.publish_job(job)
+        except Exception:  # pragma: no cover
+            self.log.warning("job event emission failed", extra={"job_id": str(job.id)}, exc_info=True)
 
     def _build_subtitles(self, scenes: List[dict[str, Any]]) -> str:
         if not scenes:

@@ -509,7 +509,7 @@ class VideoService:
         assets: list[MediaAsset] = []
         for obj in objects:
             key = obj.get("key")
-            if not key or key.rstrip().endswith("/"):
+            if not key or not self._is_image_asset(key):
                 continue
             assets.append(
                 MediaAsset(

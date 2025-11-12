@@ -17,19 +17,27 @@ class ElevenLabsClient:
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self.api_key = (api_key or "").strip()
-        self.voice_id = (voice_id or "").strip()
+        self.default_voice_id = (voice_id or "").strip()
         self.model_id = model_id
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.log = logger or logging.getLogger(__name__)
 
     def enabled(self) -> bool:
-        return bool(self.api_key and self.voice_id)
+        return bool(self.api_key)
 
-    def synthesize(self, text: str, duration_seconds: int | None = None) -> bytes:
+    def synthesize(
+        self,
+        text: str,
+        duration_seconds: int | None = None,
+        voice_id: str | None = None,
+    ) -> bytes:
         if not self.enabled():
             raise RuntimeError("ElevenLabs client is not configured")
-        url = f"{self.base_url}/v1/text-to-speech/{self.voice_id}"
+        effective_voice = (voice_id or self.default_voice_id).strip()
+        if not effective_voice:
+            raise RuntimeError("voice_id is required for ElevenLabs synthesis")
+        url = f"{self.base_url}/v1/text-to-speech/{effective_voice}"
         payload = {
             "text": text,
             "model_id": self.model_id,
@@ -52,7 +60,7 @@ class ElevenLabsClient:
             self.log.info(
                 "elevenlabs synthesis completed",
                 extra={
-                    "voice_id": self.voice_id,
+                    "voice_id": effective_voice,
                     "model_id": self.model_id,
                     "content_length": len(audio),
                 },

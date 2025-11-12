@@ -11,6 +11,7 @@
 - `POST /ideas:expand` — краткое расширение идеи (тон, формат, аудитория) для фронтовых подсказок.
 - `POST /media` — загрузка пользовательских изображений/видео (base64) прямо в бакет; `GET /media?folder=backgrounds` — список файлов пользователя. Media автоматически складываются под `assets/{user_id}/…`, так что автор видит только свои объекты (заголовок `X-User-ID` прокидывает API Gateway).
 - `GET /media/shared?folder=test` — доступ к общим ассетам (статичные бэкграунды, стоки), расположенным под `shared_media_prefix`.
+- `GET /voices` — список доступных голосов (с id, описанием и ссылками для предпрослушки). `POST /videos` теперь принимает `voice_id`, который будет использован для TTS.
 - Очередь (Kafka или встроенная in-memory) для воркеров, чтобы отделить HTTP от долгих операций.
 
 ## Технологии
@@ -38,6 +39,7 @@ poetry run uvicorn app.main:app --reload --port 8100
 - `HOST`, `PORT`, `DEFAULT_LANGUAGE`, `DEFAULT_STYLE`, `DEFAULT_TONE`.
 - `KAFKA_ENABLED`, `KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_TOPIC`, `KAFKA_GROUP_ID`, `KAFKA_UPDATES_TOPIC`.
 - `S3_ENDPOINT_URL`, `S3_REGION`, `S3_PUBLIC_URL`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `STORAGE_FOLDER_PREFIX`, `MEDIA_ROOT_PREFIX`, `DEFAULT_BACKGROUND_FOLDER`.
+- `SHARED_MEDIA_PREFIX`, `VOICE_CATALOG` (список голосов в формате JSON; если не задан, используется `ELEVENLABS_VOICE_ID` как дефолт).
 - `GEMINI_API_KEY`, `GEMINI_MODEL`.
 - `TEXT2IMG_PROVIDER`, `TTS_PROVIDER`, `TTS_VOICE`, `BACKING_TRACK`.
 - `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_MODEL_ID`, `ELEVENLABS_BASE_URL` (нужны при `TTS_PROVIDER=elevenlabs`).

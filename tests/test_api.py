@@ -14,6 +14,7 @@ def test_video_flow_with_local_queue():
         "idea": "Сделай промо ролик про новый курс",
         "duration_seconds": 30,
         "language": "ru",
+        "voice_id": "test-voice",
     }
     create_resp = client.post("/videos", json=payload)
     assert create_resp.status_code == 202
@@ -96,3 +97,9 @@ def test_shared_media_listing():
     assert resp.status_code == 200
     data = resp.json()
     assert any(item["key"].endswith("demo-shared.txt") for item in data["items"])
+
+
+def test_voices_endpoint():
+    resp = client.get("/voices")
+    assert resp.status_code == 200
+    assert "items" in resp.json()

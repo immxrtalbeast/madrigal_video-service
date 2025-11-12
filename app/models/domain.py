@@ -49,6 +49,7 @@ class VideoJob(BaseModel):
     artifacts: List[VideoJobArtifact] = Field(default_factory=list)
     storyboard_summary: Optional[str]
     voice_profile: Optional[str]
+    voice_id: Optional[str]
     soundtrack: Optional[str]
     subtitles_url: Optional[str]
     subtitles_text: Optional[str]

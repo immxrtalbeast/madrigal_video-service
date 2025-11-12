@@ -21,6 +21,7 @@ class VideoGenerationRequest(BaseModel):
     source_video_url: Optional[str] = Field(default=None, validation_alias="source_video_url")
     aspect_ratio: Optional[str] = Field(default="9:16", validation_alias="aspect_ratio")
     voice_profile: Optional[str] = Field(default=None, validation_alias="voice_profile")
+    voice_id: Optional[str] = Field(default=None, validation_alias="voice_id")
     soundtrack: Optional[str] = Field(default=None, validation_alias="soundtrack")
     storyboard_ref: Optional[str] = Field(default=None, validation_alias="storyboard_ref")
 
@@ -99,3 +100,18 @@ class MediaUploadRequest(BaseModel):
 
 class SubtitlesApprovalRequest(BaseModel):
     text: str
+
+
+class VoiceInfo(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    url: Optional[str] = None
+    preview: Optional[str] = None
+    low_volume: Optional[str] = None
+    author: Optional[str] = None
+    is_public: Optional[bool] = None
+
+
+class VoiceListResponse(BaseModel):
+    items: List[VoiceInfo]

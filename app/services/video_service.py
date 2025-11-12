@@ -124,7 +124,8 @@ class VideoService:
             assets_folder=assets_folder,
             artifacts=[],
             storyboard_summary=None,
-            voice_profile=payload.voice_profile or self.settings.tts_voice,
+            voice_profile=payload.voice_profile or payload.voice_id or self.settings.tts_voice,
+            voice_id=payload.voice_id or payload.voice_profile or self.settings.elevenlabs_voice_id,
             soundtrack=payload.soundtrack or self.settings.backing_track,
             subtitles_url=None,
             subtitles_text=None,
@@ -286,7 +287,7 @@ class VideoService:
         voice_audio_path: str | None = None
         audio_bytes: bytes | None = None
         if self.tts and self.tts.enabled():
-            audio_bytes = self.tts.synthesize(voice_script, job.duration_seconds)
+            audio_bytes = self.tts.synthesize(voice_script, job.duration_seconds, voice_id=job.voice_id)
             voice_audio_path = f"{job.assets_folder}/audio/voiceover.mp3"
             voice_audio_url = self.storage.upload_bytes(
                 voice_audio_path,
@@ -501,6 +502,8 @@ class VideoService:
         return assets
 
     def list_shared_media(self, folder: str | None = None) -> list[MediaAsset]:
+
+    def list_shared_media(self, folder: str | None = None) -> list[MediaAsset]:
         prefix = self._compose_shared_prefix(folder)
         try:
             objects = self.storage.list_files(prefix)
@@ -520,6 +523,20 @@ class VideoService:
                 )
             )
         return assets
+
+    def list_voices(self) -> list[dict[str, str]]:
+        if self.voice_catalog:
+            return self.voice_catalog
+        if self.settings.elevenlabs_voice_id:
+            return [
+                {
+                    "id": self.settings.elevenlabs_voice_id,
+                    "name": "Default voice",
+                    "description": "Configured voice from settings",
+                    "is_public": False,
+                }
+            ]
+        return []
 
     def _build_assets_folder(self) -> str:
         timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
@@ -827,3 +844,4 @@ class VideoService:
             scenes.append(data)
         summary = payload.summary or job.storyboard_summary or job.idea
         return {"summary": summary, "scenes": scenes}
+        self.voice_catalog = settings.voice_catalog

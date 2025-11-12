@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -45,6 +46,7 @@ class Settings(BaseSettings):
 
     gemini_api_key: str = ""
     gemini_model: str = "models/gemini-pro"
+    voice_catalog: list[dict[str, str]] = Field(default_factory=list)
 
 
 @lru_cache(maxsize=1)

@@ -20,12 +20,16 @@ class Settings(BaseSettings):
     kafka_updates_topic: str = "video_updates"
     kafka_group_id: str = "video-service-consumer"
 
-    # Supabase storage (S3-compatible) configuration
-    supabase_public_url: str = "https://example.supabase.co/storage/v1/object/public"
-    supabase_bucket: str = "generated-videos"
-    supabase_folder_prefix: str = "jobs"
-    supabase_api_url: str = "https://example.supabase.co"
-    supabase_api_key: str = ""
+    # Object storage configuration
+    s3_endpoint_url: str = ""
+    s3_region: str | None = None
+    s3_public_url: str = ""
+    s3_bucket: str = "generated-videos"
+    s3_access_key: str = ""
+    s3_secret_key: str = ""
+    storage_folder_prefix: str = "jobs"
+    media_root_prefix: str = ""
+    default_background_folder: str = "assets/test"
 
     # Generation provider preferences
     text2img_provider: str = "imagen"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, validator
@@ -72,3 +73,25 @@ class IdeaExpansionRequest(BaseModel):
 
 class IdeaExpansionResponse(BaseModel):
     summary: str
+
+
+class MediaAsset(BaseModel):
+    key: str
+    url: str
+    size: Optional[int] = None
+    last_modified: Optional[datetime] = None
+
+
+class MediaListResponse(BaseModel):
+    items: List[MediaAsset]
+
+
+class MediaUploadResponse(BaseModel):
+    asset: MediaAsset
+
+
+class MediaUploadRequest(BaseModel):
+    folder: str
+    filename: Optional[str] = None
+    content_type: Optional[str] = None
+    data: str

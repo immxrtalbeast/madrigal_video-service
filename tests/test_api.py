@@ -1,3 +1,4 @@
+import base64
 import time
 
 from fastapi.testclient import TestClient
@@ -45,3 +46,21 @@ def test_video_flow_with_local_queue():
     expand_resp = client.post("/ideas:expand", json={"idea": "видео о пользе медитации"})
     assert expand_resp.status_code == 200
     assert "медитации" in expand_resp.json()["summary"]
+
+
+def test_media_upload_and_list():
+    payload = {
+        "folder": "test",
+        "filename": "demo.txt",
+        "content_type": "text/plain",
+        "data": base64.b64encode(b"demo-content").decode("ascii"),
+    }
+    upload_resp = client.post("/media", json=payload)
+    assert upload_resp.status_code == 201
+    asset = upload_resp.json()["asset"]
+    assert asset["key"].endswith("demo.txt")
+
+    list_resp = client.get("/media", params={"folder": "test"})
+    assert list_resp.status_code == 200
+    items = list_resp.json()["items"]
+    assert any(item["key"].endswith("demo.txt") for item in items)

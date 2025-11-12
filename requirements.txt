@@ -8,3 +8,4 @@ openai-whisper==20231117
 moviepy==1.0.3
 imageio-ffmpeg==0.4.9
 numpy==1.26.4
+boto3==1.34.143

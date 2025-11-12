@@ -18,11 +18,16 @@ if not hasattr(Image, "ANTIALIAS"):
     Image.ANTIALIAS = Image.LANCZOS
 
 from app.clients.gemini import GeminiClient
-from app.clients.supabase_storage import SupabaseStorageClient
+from app.clients.s3_storage import S3StorageClient
 from app.clients.tts import ElevenLabsClient
 from app.clients.whisper import LocalWhisperClient
 from app.config import Settings
-from app.models.api import DraftApprovalRequest, IdeaExpansionRequest, VideoGenerationRequest
+from app.models.api import (
+    DraftApprovalRequest,
+    IdeaExpansionRequest,
+    MediaAsset,
+    VideoGenerationRequest,
+)
 from app.models.domain import (
     VideoJob,
     VideoJobArtifact,
@@ -35,10 +40,11 @@ from app.storage.repository import VideoJobRepository
 
 BACKGROUND_LIBRARY = {
     "test": [
-        "https://vcrvuyxbdluhgwcyjrvi.supabase.co/storage/v1/object/public/generated-videos/assets/test/2148124dsafasf21.png",
-        "https://vcrvuyxbdluhgwcyjrvi.supabase.co/storage/v1/object/public/generated-videos/assets/test/1749e4d07f58235c6c1507494041046b.jpg",
-        "https://vcrvuyxbdluhgwcyjrvi.supabase.co/storage/v1/object/public/generated-videos/assets/test/4821841208safafwjasdkm123.png",
-        "https://vcrvuyxbdluhgwcyjrvi.supabase.co/storage/v1/object/public/generated-videos/assets/test/bc18c9c2857df848cbb17dcb9f8aca05.jpg",
+        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/test/07d47b1443cf8ec_big.jpg",
+        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/test/d3b67dbf5b0f4547a7d9d1704f1e5ecf.jpg",
+        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/test/dadwa288da21dap.png",
+        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/test/dwadzxczf1ff31fasf.png",
+        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/test/xczsidaid124.png",
     ],
 }
 
@@ -69,11 +75,13 @@ class VideoService:
                 model_name=settings.whisper_local_model,
                 logger=self.log,
             )
-        self.storage = SupabaseStorageClient(
-            api_url=settings.supabase_api_url,
-            public_url=settings.supabase_public_url,
-            bucket=settings.supabase_bucket,
-            api_key=settings.supabase_api_key,
+        self.storage = S3StorageClient(
+            bucket=settings.s3_bucket,
+            access_key=settings.s3_access_key,
+            secret_key=settings.s3_secret_key,
+            endpoint_url=settings.s3_endpoint_url,
+            region_name=settings.s3_region,
+            public_url=settings.s3_public_url,
         )
         self.events: JobEventPublisher | None = None
         if settings.kafka_enabled and settings.kafka_updates_topic:
@@ -395,9 +403,67 @@ class VideoService:
         self.repo.save(job)
         self._emit_job_update(job)
 
+    def upload_media(
+        self,
+        folder: str,
+        filename: str | None,
+        data: bytes,
+        *,
+        content_type: str | None = None,
+    ) -> MediaAsset:
+        if not folder or not folder.strip():
+            raise ValueError("folder is required")
+        safe_name = pathlib.PurePosixPath(filename or "").name
+        if not safe_name:
+            safe_name = f"asset-{uuid4().hex}"
+        prefix = self._compose_media_prefix(folder)
+        key = "/".join(part for part in (prefix, safe_name) if part)
+        url = self.storage.upload_bytes(
+            key,
+            data,
+            content_type=content_type or "application/octet-stream",
+        )
+        return MediaAsset(key=key, url=url, size=len(data))
+
+    def list_media(self, folder: str | None = None) -> list[MediaAsset]:
+        prefix = self._compose_media_prefix(folder)
+        try:
+            objects = self.storage.list_files(prefix)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        assets: list[MediaAsset] = []
+        for obj in objects:
+            key = obj.get("key")
+            if not key:
+                continue
+            assets.append(
+                MediaAsset(
+                    key=key,
+                    url=obj.get("url", ""),
+                    size=obj.get("size"),
+                    last_modified=obj.get("last_modified"),
+                )
+            )
+        return assets
+
     def _build_assets_folder(self) -> str:
         timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        return f"{self.settings.supabase_folder_prefix}/{timestamp}-{uuid4().hex[:8]}"
+        prefix = self.settings.storage_folder_prefix.strip("/")
+        parts = [prefix, f"{timestamp}-{uuid4().hex[:8]}"] if prefix else [f"{timestamp}-{uuid4().hex[:8]}"]
+        return "/".join(parts)
+
+    def _compose_media_prefix(self, folder: str | None) -> str:
+        folder_segment = self._normalize_storage_segment(folder)
+        root_segment = self._normalize_storage_segment(self.settings.media_root_prefix)
+        if folder_segment and root_segment and folder_segment.startswith(root_segment):
+            return folder_segment
+        parts = [segment for segment in (root_segment, folder_segment) if segment]
+        return "/".join(parts)
+
+    def _normalize_storage_segment(self, value: str | None) -> str:
+        if not value:
+            return ""
+        return "/".join(part for part in value.strip().split("/") if part)
 
     def _add_artifact(
         self,
@@ -446,9 +512,24 @@ class VideoService:
         secs = seconds % 60
         return f"{hours:02}:{minutes:02}:{secs:02},000"
 
-    def _select_backgrounds(self, job: VideoJob) -> list[str] | None:
+    def _select_backgrounds(self, job: VideoJob) -> list[str]:
+        prefixes: list[str] = []
+        if job.template_id:
+            prefixes.append(job.template_id)
+        prefixes.append(self.settings.default_background_folder)
+        for prefix in prefixes:
+            prefix_path = self._compose_media_prefix(prefix)
+            if not prefix_path:
+                continue
+            try:
+                objects = self.storage.list_files(prefix_path)
+            except ValueError:
+                continue
+            urls = [obj.get("url") for obj in objects if obj.get("url")]
+            if urls:
+                return urls
         key = (job.template_id or "").lower()
-        return BACKGROUND_LIBRARY.get(key)
+        return BACKGROUND_LIBRARY.get(key) or BACKGROUND_LIBRARY.get("test") or []
 
     def _get_audio_duration(self, audio_bytes: bytes | None) -> float | None:
         if not audio_bytes:

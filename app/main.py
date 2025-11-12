@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import base64
+import binascii
+import logging
 from uuid import UUID
 
-import logging
-
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Query, status
 
 from app.config import Settings, get_settings
 from app.models.api import (
     DraftApprovalRequest,
     IdeaExpansionRequest,
     IdeaExpansionResponse,
+    MediaListResponse,
+    MediaUploadRequest,
+    MediaUploadResponse,
     VideoGenerationRequest,
     VideoJobListResponse,
     VideoJobResponse,
@@ -94,3 +98,39 @@ def approve_draft(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return VideoJobResponse(job=job)
+
+
+@app.post("/media", response_model=MediaUploadResponse, status_code=status.HTTP_201_CREATED)
+def upload_media(
+    payload: MediaUploadRequest,
+    service: VideoService = Depends(get_video_service),
+) -> MediaUploadResponse:
+    try:
+        data = base64.b64decode(payload.data, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid base64 payload") from exc
+    try:
+        asset = service.upload_media(
+            folder=payload.folder,
+            filename=payload.filename,
+            data=data,
+            content_type=payload.content_type,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return MediaUploadResponse(asset=asset)
+
+
+@app.get("/media", response_model=MediaListResponse)
+def list_media(
+    folder: str | None = Query(
+        default=None,
+        description="Путь внутри бакета (например assets/test). Оставьте пустым для корня.",
+    ),
+    service: VideoService = Depends(get_video_service),
+) -> MediaListResponse:
+    try:
+        items = service.list_media(folder)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return MediaListResponse(items=items)

@@ -35,6 +35,12 @@ _repo = VideoJobRepository()
 _service: VideoService | None = None
 
 
+def require_user_id(x_user_id: str = Header(default=None, alias="X-User-ID")) -> str:
+    if not x_user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="X-User-ID header required")
+    return x_user_id
+
+
 def get_video_service(settings: Settings = Depends(get_settings)) -> VideoService:
     global _service
     if _service is None:
@@ -151,7 +157,3 @@ def list_media(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return MediaListResponse(items=items)
-def require_user_id(x_user_id: str = Header(default=None, alias="X-User-ID")) -> str:
-    if not x_user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="X-User-ID header required")
-    return x_user_id

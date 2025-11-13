@@ -51,6 +51,7 @@ class VideoJob(BaseModel):
     voice_profile: Optional[str]
     voice_id: Optional[str]
     subtitle_batch_size: Optional[int] = None
+    subtitle_style: Optional[dict[str, Any]] = None
     soundtrack: Optional[str]
     subtitles_url: Optional[str]
     subtitles_text: Optional[str]

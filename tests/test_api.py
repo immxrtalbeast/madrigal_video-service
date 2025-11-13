@@ -44,7 +44,11 @@ def test_video_flow_with_local_queue():
 
     subs_resp = client.post(
         f"/videos/{job_id}/subtitles:approve",
-        json={"text": "", "words_per_batch": 1},
+        json={
+            "text": "",
+            "words_per_batch": 1,
+            "style": {"font_family": "Arial", "font_size": 40, "uppercase": True},
+        },
     )
     assert subs_resp.status_code == 200
 
@@ -60,6 +64,9 @@ def test_video_flow_with_local_queue():
     list_resp = client.get("/videos")
     assert list_resp.status_code == 200
     assert any(item["id"] == job_id for item in list_resp.json()["items"])
+
+    final_job = client.get(f"/videos/{job_id}").json()["job"]
+    assert final_job["subtitle_style"]["font_family"] == "Arial"
 
     expand_resp = client.post("/ideas:expand", json={"idea": "видео о пользе медитации"})
     assert expand_resp.status_code == 200

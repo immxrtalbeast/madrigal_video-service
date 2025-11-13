@@ -101,6 +101,17 @@ class MediaUploadRequest(BaseModel):
 class SubtitlesApprovalRequest(BaseModel):
     text: Optional[str] = None
     words_per_batch: Optional[int] = Field(default=None, ge=1, le=10, validation_alias="words_per_batch")
+    style: Optional["SubtitleStyleRequest"] = None
+
+
+class SubtitleStyleRequest(BaseModel):
+    font_family: Optional[str] = None
+    font_size: Optional[int] = Field(default=None, ge=8, le=120)
+    color: Optional[str] = Field(default=None, description="Colors in #RRGGBB")
+    outline_color: Optional[str] = Field(default=None)
+    bold: Optional[bool] = None
+    uppercase: Optional[bool] = None
+    margin_bottom: Optional[int] = Field(default=None, ge=0, le=400)
 
 
 class VoiceInfo(BaseModel):
@@ -112,3 +123,6 @@ class VoiceInfo(BaseModel):
 
 class VoiceListResponse(BaseModel):
     items: List[VoiceInfo]
+
+
+SubtitlesApprovalRequest.model_rebuild()

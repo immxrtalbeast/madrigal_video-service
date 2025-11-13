@@ -30,6 +30,7 @@ from app.models.api import (
     IdeaExpansionRequest,
     MediaAsset,
     SubtitlesApprovalRequest,
+    SubtitleStyleRequest,
     VideoGenerationRequest,
 )
 from app.models.domain import (
@@ -143,6 +144,7 @@ class VideoService:
             subtitles_url=None,
             subtitles_text=None,
             subtitle_batch_size=None,
+            subtitle_style=None,
             video_url=None,
             error=None,
         )
@@ -361,6 +363,7 @@ class VideoService:
         subtitles_text = self._build_subtitles(
             storyboard.get("scenes", []),
             job.subtitle_batch_size,
+            job.subtitle_style,
         )
         if audio_bytes and self.whisper and self.whisper.enabled() and not job.subtitle_batch_size:
             try:
@@ -398,15 +401,19 @@ class VideoService:
         if payload.words_per_batch:
             job.subtitle_batch_size = payload.words_per_batch
             if text:
-                text = self._rebatch_subtitles(text, payload.words_per_batch)
+                text = self._rebatch_subtitles(text, payload.words_per_batch, payload.style)
             else:
                 if not job.storyboard:
                     raise ValueError("no storyboard available to regenerate subtitles")
-                text = self._build_subtitles(job.storyboard, job.subtitle_batch_size)
+                text = self._build_subtitles(job.storyboard, job.subtitle_batch_size, payload.style)
         elif not text:
             if not job.storyboard:
                 raise ValueError("no storyboard available to regenerate subtitles")
-            text = self._build_subtitles(job.storyboard, job.subtitle_batch_size)
+            text = self._build_subtitles(job.storyboard, job.subtitle_batch_size, payload.style)
+        if payload.style:
+            job.subtitle_style = payload.style.model_dump(exclude_none=True)
+        elif job.subtitle_style is None and payload.words_per_batch:
+            job.subtitle_style = {}
         if not text:
             raise ValueError("subtitles text cannot be empty")
         subtitles_path = f"{job.assets_folder}/subtitles.srt"
@@ -665,16 +672,24 @@ class VideoService:
         except Exception:  # pragma: no cover
             self.log.warning("job event emission failed", extra={"job_id": str(job.id)}, exc_info=True)
 
-    def _build_subtitles(self, scenes: List[dict[str, Any]], words_per_batch: int | None = None) -> str:
+    def _build_subtitles(
+        self,
+        scenes: List[dict[str, Any]],
+        words_per_batch: int | None = None,
+        style: dict[str, Any] | None = None,
+    ) -> str:
         if not scenes:
             return "1\n00:00:00,000 --> 00:00:05,000\nВидео появится скоро.\n"
         lines: List[str] = []
         cursor = 0.0
         counter = 1
         batch_size = max(1, words_per_batch or 0) if words_per_batch else None
+        uppercase = bool(style.get("uppercase")) if style else False
         for scene in scenes:
             duration = float(scene.get("duration_seconds") or 5)
             text = (scene.get("voiceover") or scene.get("focus") or "").strip()
+            if uppercase:
+                text = text.upper()
             if batch_size and text:
                 words = text.split()
                 if not words:
@@ -691,8 +706,10 @@ class VideoService:
                     for chunk_idx, chunk in enumerate(chunks):
                         start_ts = self._format_timestamp(cursor + segment * chunk_idx)
                         end_ts = self._format_timestamp(cursor + segment * (chunk_idx + 1))
-                        chunk_text = " ".join(chunk)
-                        lines.append(f"{counter}\n{start_ts} --> {end_ts}\n{chunk_text}\n")
+                chunk_text = " ".join(chunk)
+                if uppercase:
+                    chunk_text = chunk_text.upper()
+                lines.append(f"{counter}\n{start_ts} --> {end_ts}\n{chunk_text}\n")
                         counter += 1
             else:
                 start = self._format_timestamp(cursor)
@@ -709,13 +726,19 @@ class VideoService:
         hours, minutes, seconds, millis = map(int, match.groups())
         return hours * 3600 + minutes * 60 + seconds + millis / 1000.0
 
-    def _rebatch_subtitles(self, text: str, batch_size: int) -> str:
+    def _rebatch_subtitles(
+        self,
+        text: str,
+        batch_size: int,
+        style_payload: Optional[SubtitleStyleRequest] = None,
+    ) -> str:
         entries = self._parse_srt_entries(text)
         if not entries:
             return text
         batch_size = max(1, batch_size)
         counter = 1
         blocks: list[str] = []
+        uppercase = bool(style_payload.uppercase) if style_payload else False
         for start, end, content in entries:
             words = content.split()
             if not words:
@@ -739,10 +762,13 @@ class VideoService:
                 chunk_start = elapsed
                 chunk_end = elapsed + portion
                 elapsed = chunk_end
+                chunk_text = " ".join(chunk)
+                if uppercase:
+                    chunk_text = chunk_text.upper()
                 block = (
                     f"{counter}\n"
                     f"{self._format_timestamp(chunk_start)} --> {self._format_timestamp(chunk_end)}\n"
-                    f"{' '.join(chunk)}\n"
+                    f"{chunk_text}\n"
                 )
                 blocks.append(block)
                 counter += 1
@@ -764,6 +790,39 @@ class VideoService:
             content = " ".join(lines[2:])
             entries.append((start, end, content))
         return entries
+
+    def _ffmpeg_force_style(self, style: dict[str, Any] | None) -> str | None:
+        if not style:
+            return None
+        parts = []
+        font = style.get("font_family")
+        if font:
+            parts.append(f"Fontname={font}")
+        font_size = style.get("font_size")
+        if font_size:
+            parts.append(f"Fontsize={font_size}")
+        color = style.get("color")
+        if color:
+            parts.append(f"PrimaryColour={self._ass_color(color)}")
+        outline_color = style.get("outline_color")
+        if outline_color:
+            parts.append(f"OutlineColour={self._ass_color(outline_color)}")
+        bold = style.get("bold")
+        if bold is not None:
+            parts.append(f"Bold={'-1' if bold else '0'}")
+        margin_bottom = style.get("margin_bottom")
+        if margin_bottom is not None:
+            parts.append(f"MarginV={margin_bottom}")
+        return ",".join(parts) if parts else None
+
+    def _ass_color(self, value: str) -> str:
+        hex_value = value.lstrip("#")
+        if len(hex_value) != 6:
+            return "&H00FFFFFF"
+        r = hex_value[0:2]
+        g = hex_value[2:4]
+        b = hex_value[4:6]
+        return f"&H00{b}{g}{r}"
 
     def _format_timestamp(self, seconds: float) -> str:
         total_ms = int(max(0, seconds) * 1000)
@@ -905,27 +964,31 @@ class VideoService:
                     audio_clip.close()
                 video_clip.close()
                 final_path = output_path
-                if subtitles_text:
-                    subs_path = os.path.join(tmpdir, "subs.srt")
-                    with open(subs_path, "w", encoding="utf-8") as f:
-                        f.write(subtitles_text)
-                    burned_path = os.path.join(tmpdir, "final_with_subs.mp4")
-                    subs_posix = pathlib.Path(subs_path).as_posix()
-                    cmd = [
-                        "ffmpeg",
-                        "-y",
-                        "-i",
-                        final_path,
-                        "-vf",
-                        f"subtitles='{subs_posix}'",
-                        "-c:v",
-                        "libx264",
-                        "-pix_fmt",
-                        "yuv420p",
-                        "-c:a",
-                        "copy",
-                        burned_path,
-                    ]
+        if subtitles_text:
+            subs_path = os.path.join(tmpdir, "subs.srt")
+            with open(subs_path, "w", encoding="utf-8") as f:
+                f.write(subtitles_text)
+            burned_path = os.path.join(tmpdir, "final_with_subs.mp4")
+            subs_posix = pathlib.Path(subs_path).as_posix()
+            style_arg = self._ffmpeg_force_style(job.subtitle_style)
+            vf = f"subtitles='{subs_posix}'"
+            if style_arg:
+                vf += f":force_style='{style_arg}'"
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-i",
+                final_path,
+                "-vf",
+                vf,
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "copy",
+                burned_path,
+            ]
                     try:
                         subprocess.run(cmd, check=True)
                         final_path = burned_path

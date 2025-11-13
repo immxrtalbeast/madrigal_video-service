@@ -17,6 +17,8 @@ from moviepy.editor import AudioFileClip, ColorClip, ImageClip, concatenate_vide
 if not hasattr(Image, "ANTIALIAS"):
     Image.ANTIALIAS = Image.LANCZOS
 
+import re
+
 from app.clients.gemini import GeminiClient, GeminiServiceUnavailable
 from app.clients.mistral import MistralClient
 from app.clients.s3_storage import S3StorageClient
@@ -395,7 +397,13 @@ class VideoService:
         text = (payload.text or "").strip()
         if payload.words_per_batch:
             job.subtitle_batch_size = payload.words_per_batch
-        if not text:
+            if text:
+                text = self._rebatch_subtitles(text, payload.words_per_batch)
+            else:
+                if not job.storyboard:
+                    raise ValueError("no storyboard available to regenerate subtitles")
+                text = self._build_subtitles(job.storyboard, job.subtitle_batch_size)
+        elif not text:
             if not job.storyboard:
                 raise ValueError("no storyboard available to regenerate subtitles")
             text = self._build_subtitles(job.storyboard, job.subtitle_batch_size)
@@ -693,6 +701,59 @@ class VideoService:
                 counter += 1
             cursor += duration
         return "\n".join(lines)
+
+    def _parse_timestamp(self, value: str) -> float:
+        match = re.match(r"(\d{2}):(\d{2}):(\d{2}),(\d{3})", value.strip())
+        if not match:
+            return 0.0
+        hours, minutes, seconds, millis = map(int, match.groups())
+        return hours * 3600 + minutes * 60 + seconds + millis / 1000.0
+
+    def _rebatch_subtitles(self, text: str, batch_size: int) -> str:
+        entries = self._parse_srt_entries(text)
+        if not entries:
+            return text
+        batch_size = max(1, batch_size)
+        counter = 1
+        blocks: list[str] = []
+        for start, end, content in entries:
+            words = content.split()
+            if not words:
+                block = f"{counter}\n{self._format_timestamp(start)} --> {self._format_timestamp(end)}\n{content}\n"
+                blocks.append(block)
+                counter += 1
+                continue
+            chunks = [words[i : i + batch_size] for i in range(0, len(words), batch_size)]
+            duration = max(end - start, 0.0)
+            segment = duration / len(chunks) if chunks else 0.0
+            for idx, chunk in enumerate(chunks):
+                chunk_start = start + segment * idx if segment > 0 else start
+                chunk_end = start + segment * (idx + 1) if segment > 0 else end
+                block = (
+                    f"{counter}\n"
+                    f"{self._format_timestamp(chunk_start)} --> {self._format_timestamp(chunk_end)}\n"
+                    f"{' '.join(chunk)}\n"
+                )
+                blocks.append(block)
+                counter += 1
+        return "\n".join(blocks)
+
+    def _parse_srt_entries(self, text: str) -> list[tuple[float, float, str]]:
+        entries: list[tuple[float, float, str]] = []
+        blocks = re.split(r"\n\s*\n", text.strip())
+        for block in blocks:
+            lines = [line.strip() for line in block.strip().splitlines() if line.strip()]
+            if len(lines) < 2:
+                continue
+            time_line = lines[1]
+            match = re.match(r"(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})", time_line)
+            if not match:
+                continue
+            start = self._parse_timestamp(match.group(1))
+            end = self._parse_timestamp(match.group(2))
+            content = " ".join(lines[2:])
+            entries.append((start, end, content))
+        return entries
 
     def _format_timestamp(self, seconds: float) -> str:
         total_ms = int(max(0, seconds) * 1000)

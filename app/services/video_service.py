@@ -1160,7 +1160,13 @@ class VideoService:
         candidate = resolved_value.strip()
         if candidate.lower().startswith(("http://", "https://")):
             try:
-                timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=10.0)
+                base_timeout = max(10.0, float(getattr(self.settings, "asset_download_timeout", 60.0)))
+                timeout = httpx.Timeout(
+                    connect=min(10.0, base_timeout),
+                    read=base_timeout,
+                    write=min(10.0, base_timeout),
+                    pool=None,
+                )
                 with httpx.stream("GET", candidate, timeout=timeout) as resp:
                     resp.raise_for_status()
                     suffix = pathlib.Path(candidate).suffix or ".mp3"

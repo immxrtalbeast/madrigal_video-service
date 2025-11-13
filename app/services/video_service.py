@@ -1015,7 +1015,7 @@ class VideoService:
                     music_layer = soundtrack_clip
                     if target_duration:
                         music_layer = music_layer.subclip(0, target_duration)
-                    volume = 0.2 if voice_clip else 0.45
+                    volume = 0.12 if voice_clip else 0.3
                     music_layer = music_layer.volumex(volume)
                     audio_layers.append(music_layer)
                 if audio_layers:

@@ -87,7 +87,7 @@ class MistralClient:
                         "body": body,
                     },
                 )
-                raise
+                raise RuntimeError(f"Mistral HTTP {status}: {body}") from exc
             body = response.json()
             self.log.info("mistral response", extra={"payload": body, "model": self.model})
             try:

@@ -84,7 +84,7 @@ class GeminiClient:
                 )
                 if status == 503:
                     raise GeminiServiceUnavailable("Gemini service unavailable") from exc
-                raise
+                raise RuntimeError(f"Gemini HTTP {status}: {body}") from exc
             except httpx.HTTPError as exc:
                 self.log.error(
                     "gemini request failed",

@@ -98,6 +98,7 @@ class VideoService:
                     extra={"topic": settings.kafka_updates_topic},
                     exc_info=True,
                 )
+        self.voice_catalog: list[dict[str, str]] = settings.voice_catalog or []
 
     def bind_queue(self, queue: BaseQueue) -> None:
         self.queue = queue

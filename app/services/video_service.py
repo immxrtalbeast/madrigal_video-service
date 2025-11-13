@@ -45,11 +45,11 @@ from app.storage.repository import VideoJobRepository
 
 BACKGROUND_LIBRARY = {
     "test": [
-        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/shared/test/07d47b1443cf8ec_big.jpg",
-        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/shared/test/d3b67dbf5b0f4547a7d9d1704f1e5ecf.jpg",
-        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/shared/test/dadwa288da21dap.png",
-        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/shared/test/dwadzxczf1ff31fasf.png",
-        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/shared/test/xczsidaid124.png",
+        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/shared/test/images/07d47b1443cf8ec_big.jpg",
+        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/shared/test/images/d3b67dbf5b0f4547a7d9d1704f1e5ecf.jpg",
+        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/shared/test/images/dadwa288da21dap.png",
+        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/shared/test/images/dwadzxczf1ff31fasf.png",
+        "https://bc16f399-f374-4a1e-a578-8a4052cc8a91.selstorage.ru/assets/shared/test/images/xczsidaid124.png",
     ],
 }
 

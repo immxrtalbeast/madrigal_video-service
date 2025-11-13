@@ -66,11 +66,19 @@ class MistralClient:
             try:
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
+                body = None
+                status = None
+                if exc.response is not None:
+                    status = exc.response.status_code
+                    try:
+                        body = exc.response.text
+                    except Exception:  # pragma: no cover
+                        body = "<binary>"
                 self.log.error(
                     "mistral HTTP error",
                     extra={
-                        "status": exc.response.status_code if exc.response else None,
-                        "body": exc.response.text if exc.response else None,
+                        "status": status,
+                        "body": body,
                     },
                 )
                 raise

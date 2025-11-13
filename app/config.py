@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     s3_bucket: str = "generated-videos"
     s3_access_key: str = ""
     s3_secret_key: str = ""
+    s3_addressing_style: str = "virtual"
     storage_folder_prefix: str = "jobs"
     media_root_prefix: str = ""
     default_background_folder: str = "assets/test"

@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 import boto3
+from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
 
 
@@ -18,6 +19,7 @@ class S3StorageClient:
         region_name: str | None = None,
         public_url: str | None = None,
         timeout: float = 30.0,
+        addressing_style: str | None = None,
     ) -> None:
         self.bucket = (bucket or "").strip()
         self.access_key = (access_key or "").strip()
@@ -34,7 +36,10 @@ class S3StorageClient:
                 aws_secret_access_key=self.secret_key,
                 region_name=self.region_name,
             )
-            self._client = session.client("s3", endpoint_url=self.endpoint_url)
+            config = BotoConfig(
+                s3={"addressing_style": (addressing_style or "virtual").lower()}
+            )
+            self._client = session.client("s3", endpoint_url=self.endpoint_url, config=config)
 
     def is_configured(self) -> bool:
         return bool(self.bucket and self.access_key and self.secret_key)

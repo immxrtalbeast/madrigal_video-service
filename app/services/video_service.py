@@ -83,6 +83,7 @@ class VideoService:
             endpoint_url=settings.s3_endpoint_url,
             region_name=settings.s3_region,
             public_url=settings.s3_public_url,
+            addressing_style=settings.s3_addressing_style,
         )
         self.events: JobEventPublisher | None = None
         if settings.kafka_enabled and settings.kafka_updates_topic:

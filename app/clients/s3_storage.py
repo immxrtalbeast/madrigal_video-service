@@ -37,7 +37,8 @@ class S3StorageClient:
                 region_name=self.region_name,
             )
             config = BotoConfig(
-                s3={"addressing_style": (addressing_style or "virtual").lower()}
+                s3={"addressing_style": (addressing_style or "virtual").lower()},
+                signature_version="s3v4",
             )
             self._client = session.client("s3", endpoint_url=self.endpoint_url, config=config)
 

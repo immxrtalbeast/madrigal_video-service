@@ -106,6 +106,35 @@ def test_shared_media_listing():
     assert any(item["key"].endswith("demo-shared.txt") for item in data["items"])
 
 
+def test_shared_video_listing():
+    from app.main import get_video_service
+
+    service = get_video_service()
+    shared_path = f"{service.settings.shared_media_prefix}/test/demo-video.mp4"
+    service.storage.upload_bytes(shared_path, b"video-bytes", content_type="video/mp4")
+
+    resp = client.get("/media/shared/videos", params={"folder": "test"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert any(item["key"].endswith("demo-video.mp4") for item in data["items"])
+
+
+def test_user_video_upload_and_list():
+    payload = {
+        "folder": "clips",
+        "filename": "demo.mp4",
+        "content_type": "video/mp4",
+        "data": base64.b64encode(b"fake-video").decode("ascii"),
+    }
+    headers = {"X-User-ID": "tester-video"}
+    upload_resp = client.post("/media/videos", json=payload, headers=headers)
+    assert upload_resp.status_code == 201
+
+    list_resp = client.get("/media/videos", params={"folder": "clips"}, headers=headers)
+    assert list_resp.status_code == 200
+    assert any(item["key"].endswith("demo.mp4") for item in list_resp.json()["items"])
+
+
 def test_voices_endpoint():
     resp = client.get("/voices")
     assert resp.status_code == 200

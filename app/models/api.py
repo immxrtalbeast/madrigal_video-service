@@ -24,6 +24,7 @@ class VideoGenerationRequest(BaseModel):
     voice_id: Optional[str] = Field(default=None, validation_alias="voice_id")
     soundtrack: Optional[str] = Field(default=None, validation_alias="soundtrack")
     soundtrack_url: Optional[str] = Field(default=None, validation_alias="soundtrack_url")
+    background_video_url: Optional[str] = Field(default=None, validation_alias="background_video_url")
     storyboard_ref: Optional[str] = Field(default=None, validation_alias="storyboard_ref")
 
     @validator("idea")
@@ -54,6 +55,7 @@ class ScenePayload(BaseModel):
 class DraftApprovalRequest(BaseModel):
     summary: Optional[str] = None
     scenes: List[ScenePayload]
+    background_video_url: Optional[str] = None
 
 
 class IdeaExpansionRequest(BaseModel):

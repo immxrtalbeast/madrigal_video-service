@@ -54,6 +54,7 @@ class VideoJob(BaseModel):
     subtitle_style: Optional[dict[str, Any]] = None
     soundtrack: Optional[str]
     soundtrack_url: Optional[str]
+    background_video_url: Optional[str] = None
     subtitles_url: Optional[str]
     subtitles_text: Optional[str]
     video_url: Optional[str]

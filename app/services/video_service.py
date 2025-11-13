@@ -12,7 +12,15 @@ from uuid import UUID, uuid4
 
 import httpx
 from PIL import Image
-from moviepy.editor import AudioFileClip, ColorClip, ImageClip, CompositeAudioClip, concatenate_videoclips
+from moviepy.editor import (
+    AudioFileClip,
+    ColorClip,
+    ImageClip,
+    VideoFileClip,
+    CompositeAudioClip,
+    concatenate_videoclips,
+)
+from moviepy.video.fx import all as vfx
 
 if not hasattr(Image, "ANTIALIAS"):
     Image.ANTIALIAS = Image.LANCZOS
@@ -143,6 +151,7 @@ class VideoService:
             voice_id=payload.voice_id or payload.voice_profile or self.settings.elevenlabs_voice_id,
             soundtrack=payload.soundtrack or self.settings.backing_track,
             soundtrack_url=payload.soundtrack_url,
+            background_video_url=(payload.background_video_url.strip() if payload.background_video_url else None),
             subtitles_url=None,
             subtitles_text=None,
             subtitle_batch_size=None,
@@ -268,6 +277,9 @@ class VideoService:
         storyboard = self._merge_storyboard(job, payload)
         job.storyboard = storyboard.get("scenes", [])
         job.storyboard_summary = storyboard.get("summary")
+        if payload.background_video_url is not None:
+            sanitized = payload.background_video_url.strip()
+            job.background_video_url = sanitized or None
         storyboard_path = f"{job.assets_folder}/storyboard.json"
         self.storage.upload_json(storyboard_path, storyboard)
         self._update_status(job, VideoJobStage.DRAFT_REVIEW, "Storyboard approved. Queued for asset build-out")
@@ -278,7 +290,9 @@ class VideoService:
         return job
 
     def _run_post_draft(self, job: VideoJob, storyboard: dict[str, Any]) -> None:
-        selected_backgrounds = self._select_backgrounds(job, storyboard)
+        selected_backgrounds: list[str] = []
+        if not (job.background_video_url and job.background_video_url.strip()):
+            selected_backgrounds = self._select_backgrounds(job, storyboard)
         self._update_status(job, VideoJobStage.ASSETS, "Preparing visual asset prompts")
         frames_payload = {
             "provider": self.settings.text2img_provider,
@@ -575,6 +589,9 @@ class VideoService:
             )
         return assets
 
+    def list_media_videos(self, folder: str | None, user_id: str) -> list[MediaAsset]:
+        return [asset for asset in self.list_media(folder, user_id) if self._is_video_asset(asset.key)]
+
     def list_shared_media(self, folder: str | None = None) -> list[MediaAsset]:
         prefix = self._compose_shared_prefix(folder)
         try:
@@ -585,6 +602,27 @@ class VideoService:
         for obj in objects:
             key = obj.get("key")
             if not key or not self._is_image_asset(key):
+                continue
+            assets.append(
+                MediaAsset(
+                    key=key,
+                    url=obj.get("url", ""),
+                    size=obj.get("size"),
+                    last_modified=obj.get("last_modified"),
+                )
+            )
+        return assets
+
+    def list_shared_videos(self, folder: str | None = None) -> list[MediaAsset]:
+        prefix = self._compose_shared_prefix(folder)
+        try:
+            objects = self.storage.list_files(prefix)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        assets: list[MediaAsset] = []
+        for obj in objects:
+            key = obj.get("key")
+            if not key or not self._is_video_asset(key):
                 continue
             assets.append(
                 MediaAsset(
@@ -684,6 +722,12 @@ class VideoService:
             return False
         lowered = key.lower()
         return lowered.endswith((".png", ".jpg", ".jpeg", ".webp"))
+
+    def _is_video_asset(self, key: str) -> bool:
+        if not key or key.rstrip().endswith("/"):
+            return False
+        lowered = key.lower()
+        return lowered.endswith((".mp4", ".mov", ".webm", ".mkv", ".avi"))
 
     def _add_artifact(
         self,
@@ -969,18 +1013,40 @@ class VideoService:
                 },
             )
             with tempfile.TemporaryDirectory() as tmpdir:
+                scene_durations: list[int] = []
+                for scene in scenes:
+                    scene_duration = max(1, int(scene.get("duration_seconds") or 5))
+                    scene_durations.append(scene_duration)
+                if not scene_durations:
+                    scene_durations = [max(1, job.duration_seconds or 5)]
+                requested_duration = sum(scene_durations)
+
+                background_video_clip = None
+                background_source = job.background_video_url.strip() if job.background_video_url else ""
+                if background_source:
+                    background_video_clip = self._build_background_video_clip(
+                        background_source,
+                        tmpdir,
+                        requested_duration,
+                        job_id=job.id,
+                    )
+                    if background_video_clip:
+                        backgrounds = []
+
                 clips = []
-                for idx, scene in enumerate(scenes):
-                    duration = max(1, int(scene.get("duration_seconds") or 5))
-                    preferred_url = scene.get("background_url")
-                    bg_path = self._download_background(backgrounds, idx, tmpdir, preferred_url)
-                    if bg_path:
-                        clip = ImageClip(bg_path).set_duration(duration)
-                    else:
-                        clip = ColorClip(size=(1080, 1920), color=(0, 0, 0)).set_duration(duration)
-                    clip = clip.resize(newsize=(1080, 1920)).set_position("center")
-                    clips.append(clip)
-                video_clip = concatenate_videoclips(clips, method="compose")
+                if background_video_clip:
+                    video_clip = background_video_clip
+                else:
+                    for idx, (scene, duration) in enumerate(zip(scenes, scene_durations)):
+                        preferred_url = scene.get("background_url")
+                        bg_path = self._download_background(backgrounds, idx, tmpdir, preferred_url)
+                        if bg_path:
+                            clip = ImageClip(bg_path).set_duration(duration)
+                        else:
+                            clip = ColorClip(size=(1080, 1920), color=(0, 0, 0)).set_duration(duration)
+                        clip = clip.resize(newsize=(1080, 1920)).set_position("center")
+                        clips.append(clip)
+                    video_clip = concatenate_videoclips(clips, method="compose")
                 total_duration = video_clip.duration
                 video_clip = video_clip.set_fps(24)
                 audio_clips: list[Any] = []
@@ -1116,6 +1182,72 @@ class VideoService:
             except Exception:  # pragma: no cover
                 continue
         return None
+
+    def _download_video_asset(self, source: str, tmpdir: str, job_id: UUID | None = None) -> str | None:
+        if not source:
+            return None
+        candidate = source.strip()
+        if not candidate:
+            return None
+        if candidate.lower().startswith(("http://", "https://")):
+            try:
+                read_timeout = max(10.0, float(getattr(self.settings, "asset_download_timeout", 60.0)))
+                timeout = httpx.Timeout(connect=10.0, read=read_timeout, write=10.0)
+                with httpx.stream("GET", candidate, timeout=timeout) as resp:
+                    resp.raise_for_status()
+                    suffix = pathlib.Path(candidate).suffix or ".mp4"
+                    path = os.path.join(tmpdir, f"background_video{suffix}")
+                    with open(path, "wb") as f:
+                        for chunk in resp.iter_bytes():
+                            if chunk:
+                                f.write(chunk)
+                return path
+            except Exception as exc:  # pragma: no cover
+                self.log.warning(
+                    "background video download failed",
+                    extra={"job_id": str(job_id) if job_id else None, "background_video_url": candidate},
+                    exc_info=exc,
+                )
+                return None
+        try:
+            data = self.storage.download_bytes(candidate)
+        except ValueError as exc:  # pragma: no cover
+            self.log.warning(
+                "background video storage fetch failed",
+                extra={"job_id": str(job_id) if job_id else None, "key": candidate},
+                exc_info=exc,
+            )
+            return None
+        suffix = pathlib.Path(candidate).suffix or ".mp4"
+        path = os.path.join(tmpdir, f"background_video{suffix}")
+        with open(path, "wb") as f:
+            f.write(data)
+        return path
+
+    def _build_background_video_clip(
+        self,
+        source: str,
+        tmpdir: str,
+        target_duration: int | float,
+        job_id: UUID | None = None,
+    ) -> VideoFileClip | None:
+        video_path = self._download_video_asset(source, tmpdir, job_id=job_id)
+        if not video_path:
+            return None
+        try:
+            clip = VideoFileClip(video_path).resize(newsize=(1080, 1920)).without_audio()
+        except Exception as exc:  # pragma: no cover
+            self.log.warning(
+                "background video load failed",
+                extra={"background_video_url": source},
+                exc_info=exc,
+            )
+            return None
+        if target_duration:
+            if clip.duration >= target_duration:
+                return clip.subclip(0, target_duration)
+            return clip.fx(vfx.loop, duration=target_duration)
+        return clip
 
     def _match_music_catalog(self, name: str | None) -> dict[str, str] | None:
         if not name:

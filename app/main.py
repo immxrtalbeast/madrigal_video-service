@@ -161,6 +161,46 @@ def list_media(
     return MediaListResponse(items=items)
 
 
+@app.post("/media/videos", response_model=MediaUploadResponse, status_code=status.HTTP_201_CREATED)
+def upload_video_media(
+    payload: MediaUploadRequest,
+    user_id: str = Depends(require_user_id),
+    service: VideoService = Depends(get_video_service),
+) -> MediaUploadResponse:
+    return upload_media(payload, user_id, service)
+
+
+@app.get("/media/videos", response_model=MediaListResponse)
+def list_video_media(
+    folder: str | None = Query(
+        default=None,
+        description="Папка в пользовательском каталоге",
+    ),
+    user_id: str = Depends(require_user_id),
+    service: VideoService = Depends(get_video_service),
+) -> MediaListResponse:
+    try:
+        items = service.list_media_videos(folder, user_id=user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return MediaListResponse(items=items)
+
+
+@app.get("/media/shared/videos", response_model=MediaListResponse)
+def list_shared_video_media(
+    folder: str | None = Query(
+        default=None,
+        description="Подпапка в каталоге общих видео",
+    ),
+    service: VideoService = Depends(get_video_service),
+) -> MediaListResponse:
+    try:
+        items = service.list_shared_videos(folder)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return MediaListResponse(items=items)
+
+
 @app.get("/media/shared", response_model=MediaListResponse)
 def list_shared_media(
     folder: str | None = Query(

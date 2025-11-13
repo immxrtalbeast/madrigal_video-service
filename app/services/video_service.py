@@ -360,7 +360,7 @@ class VideoService:
             storyboard.get("scenes", []),
             job.subtitle_batch_size,
         )
-        if audio_bytes and self.whisper and self.whisper.enabled():
+        if audio_bytes and self.whisper and self.whisper.enabled() and not job.subtitle_batch_size:
             try:
                 subtitles_text = self.whisper.transcribe(audio_bytes)
             except Exception as exc:  # pragma: no cover

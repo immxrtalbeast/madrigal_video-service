@@ -725,10 +725,20 @@ class VideoService:
                 continue
             chunks = [words[i : i + batch_size] for i in range(0, len(words), batch_size)]
             duration = max(end - start, 0.0)
-            segment = duration / len(chunks) if chunks else 0.0
-            for idx, chunk in enumerate(chunks):
-                chunk_start = start + segment * idx if segment > 0 else start
-                chunk_end = start + segment * (idx + 1) if segment > 0 else end
+            lengths = [len(" ".join(chunk)) or 1 for chunk in chunks]
+            total_len = sum(lengths) or 1
+            elapsed = start
+            for idx, (chunk_len, chunk) in enumerate(zip(lengths, chunks)):
+                if duration > 0:
+                    if idx == len(chunks) - 1:
+                        portion = end - elapsed
+                    else:
+                        portion = (chunk_len / total_len) * duration
+                else:
+                    portion = 0
+                chunk_start = elapsed
+                chunk_end = elapsed + portion
+                elapsed = chunk_end
                 block = (
                     f"{counter}\n"
                     f"{self._format_timestamp(chunk_start)} --> {self._format_timestamp(chunk_end)}\n"

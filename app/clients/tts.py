@@ -53,7 +53,7 @@ class ElevenLabsClient:
             "xi-api-key": self.api_key,
             "Content-Type": "application/json",
         }
-        with httpx.Client(proxy="http://MKnEA2:hgbt68@168.81.65.13:8000",timeout=self.timeout) as client:
+        with httpx.Client(timeout=self.timeout) as client:
             response = client.post(url, json=payload, headers=headers)
             response.raise_for_status()
             audio = response.content

@@ -56,9 +56,35 @@ class GeminiClient:
         }
         headers = {"x-goog-api-key": self.api_key}
 
-        with httpx.Client(proxy="http://MKnEA2:hgbt68@168.81.65.13:8000", timeout=self.timeout) as client:
-            response = client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
+        with httpx.Client(timeout=self.timeout) as client:
+            try:
+                response = client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                body = ""
+                status = None
+                if exc.response is not None:
+                    status = exc.response.status_code
+                    try:
+                        body = exc.response.text
+                    except Exception:  # pragma: no cover
+                        body = "<binary>"
+                self.log.error(
+                    "gemini HTTP error",
+                    extra={
+                        "status": status,
+                        "body": body,
+                        "prompt_excerpt": prompt[:2000],
+                        "model": self.model,
+                    },
+                )
+                raise
+            except httpx.HTTPError as exc:
+                self.log.error(
+                    "gemini request failed",
+                    extra={"error": str(exc), "model": self.model},
+                )
+                raise
             body = response.json()
             self.log.info("gemini response", extra={"payload": body, "model": self.model})
             try:

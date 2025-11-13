@@ -110,3 +110,9 @@ def test_voices_endpoint():
     resp = client.get("/voices")
     assert resp.status_code == 200
     assert "items" in resp.json()
+
+
+def test_music_endpoint():
+    resp = client.get("/music")
+    assert resp.status_code == 200
+    assert "items" in resp.json()

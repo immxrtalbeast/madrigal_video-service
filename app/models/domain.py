@@ -53,6 +53,7 @@ class VideoJob(BaseModel):
     subtitle_batch_size: Optional[int] = None
     subtitle_style: Optional[dict[str, Any]] = None
     soundtrack: Optional[str]
+    soundtrack_url: Optional[str]
     subtitles_url: Optional[str]
     subtitles_text: Optional[str]
     video_url: Optional[str]

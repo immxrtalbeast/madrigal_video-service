@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     mistral_api_key: str = ""
     mistral_model: str = "mistral-large-latest"
     mistral_base_url: str = "https://api.mistral.ai"
+    music_catalog: list[dict[str, str]] = Field(default_factory=list)
 
 
 @lru_cache(maxsize=1)

@@ -23,6 +23,7 @@ class VideoGenerationRequest(BaseModel):
     voice_profile: Optional[str] = Field(default=None, validation_alias="voice_profile")
     voice_id: Optional[str] = Field(default=None, validation_alias="voice_id")
     soundtrack: Optional[str] = Field(default=None, validation_alias="soundtrack")
+    soundtrack_url: Optional[str] = Field(default=None, validation_alias="soundtrack_url")
     storyboard_ref: Optional[str] = Field(default=None, validation_alias="storyboard_ref")
 
     @validator("idea")
@@ -126,3 +127,15 @@ class VoiceListResponse(BaseModel):
 
 
 SubtitlesApprovalRequest.model_rebuild()
+
+
+class MusicInfo(BaseModel):
+    name: str
+    description: Optional[str] = None
+    author: Optional[str] = None
+    url: str
+    low_volume: Optional[str] = None
+
+
+class MusicListResponse(BaseModel):
+    items: List[MusicInfo]

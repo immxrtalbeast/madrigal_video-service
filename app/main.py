@@ -12,6 +12,7 @@ from app.models.api import (
     DraftApprovalRequest,
     IdeaExpansionRequest,
     IdeaExpansionResponse,
+    MusicListResponse,
     MediaListResponse,
     MediaUploadRequest,
     MediaUploadResponse,
@@ -179,3 +180,9 @@ def list_shared_media(
 def list_voices(service: VideoService = Depends(get_video_service)) -> VoiceListResponse:
     items = service.list_voices()
     return VoiceListResponse(items=items)
+
+
+@app.get("/music", response_model=MusicListResponse)
+def list_music(service: VideoService = Depends(get_video_service)) -> MusicListResponse:
+    items = service.list_music()
+    return MusicListResponse(items=items)

@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 
 import httpx
 from PIL import Image
-from moviepy.editor import AudioFileClip, ColorClip, ImageClip, concatenate_videoclips
+from moviepy.editor import AudioFileClip, ColorClip, ImageClip, CompositeAudioClip, concatenate_videoclips
 
 if not hasattr(Image, "ANTIALIAS"):
     Image.ANTIALIAS = Image.LANCZOS
@@ -112,6 +112,7 @@ class VideoService:
                     exc_info=True,
                 )
         self.voice_catalog: list[dict[str, str]] = settings.voice_catalog or []
+        self.music_catalog: list[dict[str, str]] = settings.music_catalog or []
 
     def bind_queue(self, queue: BaseQueue) -> None:
         self.queue = queue
@@ -141,6 +142,7 @@ class VideoService:
             voice_profile=payload.voice_profile or payload.voice_id or self.settings.tts_voice,
             voice_id=payload.voice_id or payload.voice_profile or self.settings.elevenlabs_voice_id,
             soundtrack=payload.soundtrack or self.settings.backing_track,
+            soundtrack_url=payload.soundtrack_url,
             subtitles_url=None,
             subtitles_text=None,
             subtitle_batch_size=None,
@@ -347,17 +349,36 @@ class VideoService:
                 metadata={"provider": "text-only"},
             )
 
+        resolved_soundtrack_url, soundtrack_meta = self._resolve_soundtrack_source(job)
+        soundtrack_plan = [
+            f"Soundtrack preset: {job.soundtrack or self.settings.backing_track}",
+        ]
+        if job.soundtrack_url:
+            soundtrack_plan.append(f"Requested URL: {job.soundtrack_url}")
+        if resolved_soundtrack_url:
+            soundtrack_plan.append(f"Resolved URL: {resolved_soundtrack_url}")
+        if not resolved_soundtrack_url:
+            soundtrack_plan.append("Fallback: no downloadable soundtrack configured.")
         soundtrack_path = f"{job.assets_folder}/audio/soundtrack.txt"
         soundtrack_url = self.storage.upload_text(
             soundtrack_path,
-            f"Use soundtrack preset '{job.soundtrack}' for pacing.",
+            "\n".join(soundtrack_plan),
         )
+        soundtrack_metadata: dict[str, Any] = {
+            "preset": job.soundtrack,
+        }
+        if job.soundtrack_url:
+            soundtrack_metadata["requested_url"] = job.soundtrack_url
+        if resolved_soundtrack_url:
+            soundtrack_metadata["resolved_url"] = resolved_soundtrack_url
+        if soundtrack_meta:
+            soundtrack_metadata.update({k: v for k, v in soundtrack_meta.items() if v})
         self._add_artifact(
             job,
             kind="soundtrack",
             path=soundtrack_path,
             url=soundtrack_url,
-            metadata={"preset": job.soundtrack},
+            metadata=soundtrack_metadata,
         )
 
         subtitles_text = self._build_subtitles(
@@ -600,6 +621,26 @@ class VideoService:
                 }
             ]
         return []
+
+    def list_music(self) -> list[dict[str, str]]:
+        if not self.music_catalog:
+            return []
+        items: list[dict[str, str]] = []
+        for entry in self.music_catalog:
+            name = (entry.get("name") or "").strip()
+            url = (entry.get("url") or "").strip()
+            if not name or not url:
+                continue
+            items.append(
+                {
+                    "name": name,
+                    "description": entry.get("description"),
+                    "author": entry.get("author"),
+                    "url": url,
+                    "low_volume": entry.get("low_volume"),
+                }
+            )
+        return items
 
     def _build_assets_folder(self) -> str:
         timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
@@ -943,17 +984,49 @@ class VideoService:
                 video_clip = concatenate_videoclips(clips, method="compose")
                 total_duration = video_clip.duration
                 video_clip = video_clip.set_fps(24)
-                audio_clip = None
+                audio_clips: list[Any] = []
+                final_audio_clip = None
+                voice_clip = None
                 if audio_bytes:
                     audio_path = os.path.join(tmpdir, "voiceover.mp3")
                     with open(audio_path, "wb") as f:
                         f.write(audio_bytes)
-                    audio_clip = AudioFileClip(audio_path)
-                    video_clip = video_clip.set_audio(audio_clip)
+                    voice_clip = AudioFileClip(audio_path)
+                    audio_clips.append(voice_clip)
                     if audio_duration:
                         total_duration = audio_duration
-                if total_duration and total_duration > 0:
-                    video_clip = video_clip.subclip(0, total_duration)
+                soundtrack_clip = None
+                soundtrack_path, _ = self._prepare_soundtrack_file(job, tmpdir)
+                if soundtrack_path:
+                    try:
+                        soundtrack_clip = AudioFileClip(soundtrack_path)
+                        audio_clips.append(soundtrack_clip)
+                    except Exception as exc:  # pragma: no cover
+                        self.log.warning(
+                            "soundtrack clip load failed",
+                            extra={"job_id": str(job.id)},
+                            exc_info=exc,
+                        )
+                        soundtrack_clip = None
+                target_duration = total_duration or video_clip.duration
+                audio_layers = []
+                if voice_clip:
+                    audio_layers.append(voice_clip if not target_duration else voice_clip.subclip(0, target_duration))
+                if soundtrack_clip:
+                    music_layer = soundtrack_clip
+                    if target_duration:
+                        music_layer = music_layer.subclip(0, target_duration)
+                    volume = 0.35 if voice_clip else 0.6
+                    music_layer = music_layer.volumex(volume)
+                    audio_layers.append(music_layer)
+                if audio_layers:
+                    if len(audio_layers) == 1:
+                        final_audio_clip = audio_layers[0]
+                    else:
+                        final_audio_clip = CompositeAudioClip(audio_layers)
+                    video_clip = video_clip.set_audio(final_audio_clip)
+                if target_duration and target_duration > 0:
+                    video_clip = video_clip.subclip(0, target_duration)
                 output_path = os.path.join(tmpdir, "final.mp4")
                 video_clip.write_videofile(
                     output_path,
@@ -966,8 +1039,16 @@ class VideoService:
                 )
                 for clip in clips:
                     clip.close()
-                if audio_clip:
-                    audio_clip.close()
+                if final_audio_clip:
+                    try:
+                        final_audio_clip.close()
+                    except Exception:  # pragma: no cover
+                        pass
+                for resource in audio_clips:
+                    try:
+                        resource.close()
+                    except Exception:  # pragma: no cover
+                        pass
                 video_clip.close()
                 final_path = output_path
                 if subtitles_text:
@@ -1037,6 +1118,77 @@ class VideoService:
                 continue
         return None
 
+    def _match_music_catalog(self, name: str | None) -> dict[str, str] | None:
+        if not name:
+            return None
+        target = name.strip().lower()
+        if not target:
+            return None
+        for entry in self.music_catalog:
+            entry_name = (entry.get("name") or "").strip().lower()
+            if entry_name == target:
+                return entry
+        return None
+
+    def _resolve_soundtrack_source(self, job: VideoJob) -> tuple[str | None, dict[str, Any]]:
+        candidate = (job.soundtrack_url or "").strip()
+        if candidate:
+            source = "custom_url"
+            if not candidate.lower().startswith(("http://", "https://")):
+                source = "storage_key"
+            return candidate, {"source": source}
+        catalog_entry = self._match_music_catalog(job.soundtrack)
+        if catalog_entry:
+            catalog_url = (catalog_entry.get("low_volume") or catalog_entry.get("url") or "").strip()
+            if catalog_url:
+                meta: dict[str, Any] = {
+                    "source": "music_catalog",
+                    "name": catalog_entry.get("name"),
+                }
+                if catalog_entry.get("low_volume"):
+                    meta["variant"] = "low_volume"
+                return catalog_url, meta
+        preset_value = (job.soundtrack or "").strip()
+        if preset_value.lower().startswith(("http://", "https://")):
+            return preset_value, {"source": "preset_url"}
+        return None, {}
+
+    def _prepare_soundtrack_file(self, job: VideoJob, tmpdir: str) -> tuple[str | None, dict[str, Any]]:
+        resolved_value, meta = self._resolve_soundtrack_source(job)
+        if not resolved_value:
+            return None, meta
+        candidate = resolved_value.strip()
+        if candidate.lower().startswith(("http://", "https://")):
+            try:
+                resp = httpx.get(candidate, timeout=30.0)
+                resp.raise_for_status()
+                suffix = pathlib.Path(candidate).suffix or ".mp3"
+                path = os.path.join(tmpdir, f"soundtrack{suffix}")
+                with open(path, "wb") as f:
+                    f.write(resp.content)
+                return path, meta
+            except Exception as exc:  # pragma: no cover - network best effort
+                self.log.warning(
+                    "soundtrack download failed",
+                    extra={"job_id": str(job.id), "soundtrack_url": candidate},
+                    exc_info=exc,
+                )
+                return None, meta
+        try:
+            data = self.storage.download_bytes(candidate)
+        except ValueError as exc:  # pragma: no cover
+            self.log.warning(
+                "soundtrack storage fetch failed",
+                extra={"job_id": str(job.id), "key": candidate},
+                exc_info=exc,
+            )
+            return None, meta
+        suffix = pathlib.Path(candidate).suffix or ".mp3"
+        path = os.path.join(tmpdir, f"soundtrack{suffix}")
+        with open(path, "wb") as f:
+            f.write(data)
+        return path, meta
+
     def _merge_storyboard(self, job: VideoJob, payload: DraftApprovalRequest) -> dict[str, Any]:
         scenes_input = payload.scenes or []
         if not scenes_input and not job.storyboard:
@@ -1054,4 +1206,3 @@ class VideoService:
             scenes.append(data)
         summary = payload.summary or job.storyboard_summary or job.idea
         return {"summary": summary, "scenes": scenes}
-        self.voice_catalog = settings.voice_catalog

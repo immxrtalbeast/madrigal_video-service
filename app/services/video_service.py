@@ -637,7 +637,6 @@ class VideoService:
                     "description": entry.get("description"),
                     "author": entry.get("author"),
                     "url": url,
-                    "low_volume": entry.get("low_volume"),
                 }
             )
         return items
@@ -1139,14 +1138,12 @@ class VideoService:
             return candidate, {"source": source}
         catalog_entry = self._match_music_catalog(job.soundtrack)
         if catalog_entry:
-            catalog_url = (catalog_entry.get("low_volume") or catalog_entry.get("url") or "").strip()
+            catalog_url = (catalog_entry.get("url") or "").strip()
             if catalog_url:
                 meta: dict[str, Any] = {
                     "source": "music_catalog",
                     "name": catalog_entry.get("name"),
                 }
-                if catalog_entry.get("low_volume"):
-                    meta["variant"] = "low_volume"
                 return catalog_url, meta
         preset_value = (job.soundtrack or "").strip()
         if preset_value.lower().startswith(("http://", "https://")):

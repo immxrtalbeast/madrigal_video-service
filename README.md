@@ -12,7 +12,7 @@
 - `POST /media` — загрузка пользовательских изображений/видео (base64) прямо в бакет; `GET /media?folder=backgrounds` — список файлов пользователя. Media автоматически складываются под `assets/{user_id}/…`, так что автор видит только свои объекты (заголовок `X-User-ID` прокидывает API Gateway).
 - `GET /media/shared?folder=test` — доступ к общим ассетам (статичные бэкграунды, стоки), расположенным под `shared_media_prefix`.
 - `GET /voices` — список доступных голосов (с id, описанием и ссылками для предпрослушки). `POST /videos` принимает `voice_id`, который будет использован для TTS.
-- `GET /music` — каталог фоновых треков (название, описание, автор, `url`, `low_volume`). При создании видео можно передать `soundtrack` (имя из каталога) либо `soundtrack_url` (прямая ссылка/ключ на mp3). Во время финального рендера сервис скачает дорожку, приглушит её и смешает с голосом.
+- `GET /music` — каталог фоновых треков (название, описание, автор, `url`). При создании видео можно передать `soundtrack` (имя из каталога) либо `soundtrack_url` (прямая ссылка/ключ на mp3). Во время финального рендера сервис скачает дорожку, приглушит её и смешает с голосом.
 - Очередь (Kafka или встроенная in-memory) для воркеров, чтобы отделить HTTP от долгих операций.
 
 ## Технологии
@@ -41,7 +41,7 @@ poetry run uvicorn app.main:app --reload --port 8100
 - `KAFKA_ENABLED`, `KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_TOPIC`, `KAFKA_GROUP_ID`, `KAFKA_UPDATES_TOPIC`.
 - `S3_ENDPOINT_URL`, `S3_REGION`, `S3_PUBLIC_URL`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `STORAGE_FOLDER_PREFIX`, `MEDIA_ROOT_PREFIX`, `DEFAULT_BACKGROUND_FOLDER`.
 - `S3_ADDRESSING_STYLE` (virtual/path), `SHARED_MEDIA_PREFIX`, `VOICE_CATALOG` (список голосов в формате JSON; если не задан, используется `ELEVENLABS_VOICE_ID` как дефолт).
-- `MUSIC_CATALOG` — JSON-массив с объектами `{ "name": "...", "description": "...", "author": "...", "url": "https://…/audio.mp3", "low_volume": "https://…/low.mp3" }`. `low_volume` опционален; если его нет, сервис приглушит основной `url`.
+- `MUSIC_CATALOG` — JSON-массив с объектами `{ "name": "...", "description": "...", "author": "...", "url": "https://…/audio.mp3" }`. Сервис автоматически приглушает дорожку при микшировании, поэтому отдельный `low_volume` больше не нужен.
 - `ASSET_DOWNLOAD_TIMEOUT` — лимит (в секундах) на скачивание фоновой музыки/ассетов. По умолчанию 120 с; увеличьте, если треки хостятся на медленных CDN.
 - `MISTRAL_API_KEY`, `MISTRAL_MODEL`, `MISTRAL_BASE_URL` — для запасного провайдера сториборда (если Gemini возвращает 503, сервис автоматически попробует Mistral).
 - `GEMINI_API_KEY`, `GEMINI_MODEL`.
@@ -54,5 +54,5 @@ poetry run uvicorn app.main:app --reload --port 8100
 - `POST /videos` понимает поля:
   - `soundtrack` — название из `/music`.
   - `soundtrack_url` — произвольная ссылка на mp3 (например, результат `POST /media`). Можно также передать ключ в бакете (`assets/user123/audio/demo.mp3`) — сервис сам выкачает байты через S3 API.
-- Если указаны оба поля, приоритет у `soundtrack_url`. При его недоступности сервис попытается подобрать дорожку по имени (`soundtrack` → `/music` → `low_volume`/`url`). Если ничего не найдено, видео будет без фоновой музыки.
+- Если указаны оба поля, приоритет у `soundtrack_url`. При его недоступности сервис попытается подобрать дорожку по имени (`soundtrack` → `/music`). Если ничего не найдено, видео будет без фоновой музыки.
 - Во время рендера MoviePy/FFmpeg микшируют озвучку и фон: голос остаётся на 100%, музыка приглушается (0.35 по громкости при наличии голоса или 0.6, если озвучки нет).

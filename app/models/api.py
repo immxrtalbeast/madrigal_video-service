@@ -134,7 +134,6 @@ class MusicInfo(BaseModel):
     description: Optional[str] = None
     author: Optional[str] = None
     url: str
-    low_volume: Optional[str] = None
 
 
 class MusicListResponse(BaseModel):

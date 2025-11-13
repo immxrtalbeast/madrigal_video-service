@@ -39,7 +39,8 @@ poetry run uvicorn app.main:app --reload --port 8100
 - `HOST`, `PORT`, `DEFAULT_LANGUAGE`, `DEFAULT_STYLE`, `DEFAULT_TONE`.
 - `KAFKA_ENABLED`, `KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_TOPIC`, `KAFKA_GROUP_ID`, `KAFKA_UPDATES_TOPIC`.
 - `S3_ENDPOINT_URL`, `S3_REGION`, `S3_PUBLIC_URL`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `STORAGE_FOLDER_PREFIX`, `MEDIA_ROOT_PREFIX`, `DEFAULT_BACKGROUND_FOLDER`.
-- `SHARED_MEDIA_PREFIX`, `VOICE_CATALOG` (список голосов в формате JSON; если не задан, используется `ELEVENLABS_VOICE_ID` как дефолт).
+- `S3_ADDRESSING_STYLE` (virtual/path), `SHARED_MEDIA_PREFIX`, `VOICE_CATALOG` (список голосов в формате JSON; если не задан, используется `ELEVENLABS_VOICE_ID` как дефолт).
+- `MISTRAL_API_KEY`, `MISTRAL_MODEL`, `MISTRAL_BASE_URL` — для запасного провайдера сториборда (если Gemini возвращает 503, сервис автоматически попробует Mistral).
 - `GEMINI_API_KEY`, `GEMINI_MODEL`.
 - `TEXT2IMG_PROVIDER`, `TTS_PROVIDER`, `TTS_VOICE`, `BACKING_TRACK`.
 - `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_MODEL_ID`, `ELEVENLABS_BASE_URL` (нужны при `TTS_PROVIDER=elevenlabs`).

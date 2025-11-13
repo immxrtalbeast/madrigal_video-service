@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "models/gemini-pro"
     voice_catalog: list[dict[str, str]] = Field(default_factory=list)
+    mistral_api_key: str = ""
+    mistral_model: str = "mistral-large-latest"
+    mistral_base_url: str = "https://api.mistral.ai"
 
 
 @lru_cache(maxsize=1)

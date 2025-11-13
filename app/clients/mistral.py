@@ -1,15 +1,11 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any, List, Optional
 
-import logging
 import httpx
-
-
-class GeminiServiceUnavailable(Exception):
-    """Raised when Gemini responds with 503."""
 
 
 @dataclass
@@ -20,16 +16,18 @@ class StoryboardScene:
     duration_seconds: int
 
 
-class GeminiClient:
+class MistralClient:
     def __init__(
         self,
         api_key: str | None,
-        model: str = "models/gemini-pro",
+        model: str = "mistral-large-latest",
+        base_url: str = "https://api.mistral.ai",
         timeout: float = 30.0,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self.api_key = (api_key or "").strip()
         self.model = model
+        self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.log = logger or logging.getLogger(__name__)
 
@@ -49,55 +47,30 @@ class GeminiClient:
             return self._fallback_storyboard(idea, target_audience, style, duration_seconds, num_scenes)
 
         prompt = self._build_prompt(idea, target_audience, style, duration_seconds, num_scenes, wpm_hint)
-        url = f"https://generativelanguage.googleapis.com/v1beta/{self.model}:generateContent"
+        url = f"{self.base_url}/v1/chat/completions"
         payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": 0.4,
-                "topP": 0.95,
-                "topK": 35
-            },
+            "model": self.model,
+            "temperature": 0.4,
+            "messages": [
+                {"role": "system", "content": "You are an assistant that produces JSON storyboards."},
+                {"role": "user", "content": prompt},
+            ],
         }
-        headers = {"x-goog-api-key": self.api_key}
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
 
         with httpx.Client(proxy="http://MKnEA2:hgbt68@168.81.65.13:8000", timeout=self.timeout) as client:
-            try:
-                response = client.post(url, headers=headers, json=payload)
-                response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                body = ""
-                status = None
-                if exc.response is not None:
-                    status = exc.response.status_code
-                    try:
-                        body = exc.response.text
-                    except Exception:  # pragma: no cover
-                        body = "<binary>"
-                self.log.error(
-                    "gemini HTTP error",
-                    extra={
-                        "status": status,
-                        "body": body,
-                        "prompt_excerpt": prompt[:2000],
-                        "model": self.model,
-                    },
-                )
-                if status == 503:
-                    raise GeminiServiceUnavailable("Gemini service unavailable") from exc
-                raise
-            except httpx.HTTPError as exc:
-                self.log.error(
-                    "gemini request failed",
-                    extra={"error": str(exc), "model": self.model},
-                )
-                raise
+            response = client.post(url, headers=headers, json=payload)
+            response.raise_for_status()
             body = response.json()
-            self.log.info("gemini response", extra={"payload": body, "model": self.model})
+            self.log.info("mistral response", extra={"payload": body, "model": self.model})
             try:
                 text = self._extract_text(body)
-            except ValueError as exc:
+            except ValueError:
                 self.log.warning(
-                    "gemini response missing structured text, falling back",
+                    "mistral response missing structured text, falling back",
                     extra={"payload": body, "model": self.model},
                 )
                 return self._fallback_storyboard(idea, target_audience, style, duration_seconds, num_scenes)
@@ -107,19 +80,14 @@ class GeminiClient:
         return storyboard
 
     def _extract_text(self, payload: dict[str, Any]) -> str:
-        candidates = payload.get("candidates") or []
-        if not candidates:
-            self.log.error("Gemini response does not include candidates", extra={"payload": payload})
-            raise ValueError("Gemini response does not include candidates")
-        parts = candidates[0].get("content", {}).get("parts") or []
-        if not parts:
-            self.log.error("Gemini response missing content parts", extra={"payload": payload})
-            raise ValueError("Gemini response missing content parts")
-        text = parts[0].get("text")
-        if not text:
-            self.log.error("Gemini response missing text payload", extra={"payload": payload})
-            raise ValueError("Gemini response missing text payload")
-        return text
+        choices = payload.get("choices") or []
+        if not choices:
+            raise ValueError("Mistral response missing choices")
+        message = choices[0].get("message") or {}
+        content = message.get("content")
+        if not content:
+            raise ValueError("Mistral response missing message content")
+        return content
 
     def _parse_storyboard(self, raw: str, idea: str, style: str) -> dict[str, Any]:
         raw = self._strip_code_fence(raw)
@@ -141,7 +109,6 @@ class GeminiClient:
             data["scenes"] = parsed_scenes
             return data
         except json.JSONDecodeError:
-            # fallback to simple parsing
             return self._fallback_storyboard(idea, None, style, 60, 5)
 
     def _strip_code_fence(self, payload: str) -> str:
@@ -149,7 +116,7 @@ class GeminiClient:
         if text.startswith("```"):
             text = text[3:]
             if text.lower().startswith("json"):
-                text = text[4:]  # remove 'json'
+                text = text[4:]
             text = text.lstrip("\n\r")
         if text.endswith("```"):
             text = text[:-3]

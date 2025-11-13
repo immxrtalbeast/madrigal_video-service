@@ -17,7 +17,8 @@ from moviepy.editor import AudioFileClip, ColorClip, ImageClip, concatenate_vide
 if not hasattr(Image, "ANTIALIAS"):
     Image.ANTIALIAS = Image.LANCZOS
 
-from app.clients.gemini import GeminiClient
+from app.clients.gemini import GeminiClient, GeminiServiceUnavailable
+from app.clients.mistral import MistralClient
 from app.clients.s3_storage import S3StorageClient
 from app.clients.tts import ElevenLabsClient
 from app.clients.whisper import LocalWhisperClient
@@ -61,6 +62,14 @@ class VideoService:
             model=settings.gemini_model,
             logger=self.log,
         )
+        self.mistral = None
+        if settings.mistral_api_key:
+            self.mistral = MistralClient(
+                api_key=settings.mistral_api_key,
+                model=settings.mistral_model,
+                base_url=settings.mistral_base_url,
+                logger=self.log,
+            )
         self.tts = None
         if settings.tts_provider.lower() == "elevenlabs":
             self.tts = ElevenLabsClient(
@@ -203,13 +212,30 @@ class VideoService:
 
     def _generate_storyboard(self, job: VideoJob) -> dict[str, Any]:
         self.log.debug("starting storyboard drafting", extra={"job_id": str(job.id)})
-        storyboard = self.gemini.generate_storyboard(
-            idea=job.idea,
-            target_audience=job.target_audience,
-            style=job.style or self.settings.default_style,
-            duration_seconds=job.duration_seconds,
-            wpm_hint=130,
-        )
+        storyboard: dict[str, Any] | None = None
+        try:
+            storyboard = self.gemini.generate_storyboard(
+                idea=job.idea,
+                target_audience=job.target_audience,
+                style=job.style or self.settings.default_style,
+                duration_seconds=job.duration_seconds,
+                wpm_hint=130,
+            )
+        except GeminiServiceUnavailable:
+            self.log.warning(
+                "gemini unavailable, considering mistral fallback",
+                extra={"job_id": str(job.id)},
+            )
+            if self.mistral and self.mistral.enabled():
+                storyboard = self.mistral.generate_storyboard(
+                    idea=job.idea,
+                    target_audience=job.target_audience,
+                    style=job.style or self.settings.default_style,
+                    duration_seconds=job.duration_seconds,
+                    wpm_hint=130,
+                )
+            else:
+                raise
         self._update_status(job, VideoJobStage.DRAFTING, "Drafted storyboard via Gemini")
         job.storyboard_summary = storyboard.get("summary")
         storyboard_path = f"{job.assets_folder}/storyboard.json"

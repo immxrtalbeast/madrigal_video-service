@@ -63,7 +63,17 @@ class MistralClient:
 
         with httpx.Client(proxy="http://MKnEA2:hgbt68@168.81.65.13:8000", timeout=self.timeout) as client:
             response = client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                self.log.error(
+                    "mistral HTTP error",
+                    extra={
+                        "status": exc.response.status_code if exc.response else None,
+                        "body": exc.response.text if exc.response else None,
+                    },
+                )
+                raise
             body = response.json()
             self.log.info("mistral response", extra={"payload": body, "model": self.model})
             try:

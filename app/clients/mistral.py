@@ -52,8 +52,14 @@ class MistralClient:
             "model": self.model,
             "temperature": 0.4,
             "messages": [
-                {"role": "system", "content": "You are an assistant that produces JSON storyboards."},
-                {"role": "user", "content": prompt},
+                {
+                    "role": "system",
+                    "content": [{"type": "text", "text": "You are an assistant that produces JSON storyboards."}],
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": prompt}],
+                },
             ],
         }
         headers = {

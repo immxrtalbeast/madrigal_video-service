@@ -111,7 +111,17 @@ class MistralClient:
         content = message.get("content")
         if not content:
             raise ValueError("Mistral response missing message content")
-        return content
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    parts.append(item.get("text", ""))
+                elif isinstance(item, str):
+                    parts.append(item)
+            return "\n".join(parts).strip()
+        if isinstance(content, str):
+            return content
+        raise ValueError("Unsupported content format from Mistral")
 
     def _parse_storyboard(self, raw: str, idea: str, style: str) -> dict[str, Any]:
         raw = self._strip_code_fence(raw)

@@ -1160,13 +1160,16 @@ class VideoService:
         candidate = resolved_value.strip()
         if candidate.lower().startswith(("http://", "https://")):
             try:
-                resp = httpx.get(candidate, timeout=30.0)
-                resp.raise_for_status()
-                suffix = pathlib.Path(candidate).suffix or ".mp3"
-                path = os.path.join(tmpdir, f"soundtrack{suffix}")
-                with open(path, "wb") as f:
-                    f.write(resp.content)
-                return path, meta
+                timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=10.0)
+                with httpx.stream("GET", candidate, timeout=timeout) as resp:
+                    resp.raise_for_status()
+                    suffix = pathlib.Path(candidate).suffix or ".mp3"
+                    path = os.path.join(tmpdir, f"soundtrack{suffix}")
+                    with open(path, "wb") as f:
+                        for chunk in resp.iter_bytes():
+                            if chunk:
+                                f.write(chunk)
+                    return path, meta
             except Exception as exc:  # pragma: no cover - network best effort
                 self.log.warning(
                     "soundtrack download failed",

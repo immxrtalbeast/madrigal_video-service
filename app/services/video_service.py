@@ -693,23 +693,29 @@ class VideoService:
             if batch_size and text:
                 words = text.split()
                 if not words:
-                    start = self._format_timestamp(int(cursor))
-                    end = self._format_timestamp(int(cursor + duration))
-                    lines.append(f"{counter}\n{start} --> {end}\n\n")
+                    start = self._format_timestamp(cursor)
+                    end = self._format_timestamp(cursor + duration)
+                    lines.append(f"{counter}\n{start} --> {end}\n{text}\n")
                     counter += 1
                 else:
-                    chunks = [
-                        words[i : i + batch_size]
-                        for i in range(0, len(words), batch_size)
-                    ]
-                    segment = duration / len(chunks)
+                    chunks = [words[i : i + batch_size] for i in range(0, len(words), batch_size)]
+                    total_chunks = len(chunks)
+                    segment = duration / total_chunks if total_chunks and duration > 0 else 0
                     for chunk_idx, chunk in enumerate(chunks):
-                        start_ts = self._format_timestamp(cursor + segment * chunk_idx)
-                        end_ts = self._format_timestamp(cursor + segment * (chunk_idx + 1))
-                chunk_text = " ".join(chunk)
-                if uppercase:
-                    chunk_text = chunk_text.upper()
-                lines.append(f"{counter}\n{start_ts} --> {end_ts}\n{chunk_text}\n")
+                        start_ts = (
+                            self._format_timestamp(cursor + segment * chunk_idx)
+                            if segment
+                            else self._format_timestamp(cursor)
+                        )
+                        end_ts = (
+                            self._format_timestamp(cursor + segment * (chunk_idx + 1))
+                            if segment
+                            else self._format_timestamp(cursor + duration)
+                        )
+                        chunk_text = " ".join(chunk)
+                        if uppercase:
+                            chunk_text = chunk_text.upper()
+                        lines.append(f"{counter}\n{start_ts} --> {end_ts}\n{chunk_text}\n")
                         counter += 1
             else:
                 start = self._format_timestamp(cursor)
@@ -964,31 +970,31 @@ class VideoService:
                     audio_clip.close()
                 video_clip.close()
                 final_path = output_path
-        if subtitles_text:
-            subs_path = os.path.join(tmpdir, "subs.srt")
-            with open(subs_path, "w", encoding="utf-8") as f:
-                f.write(subtitles_text)
-            burned_path = os.path.join(tmpdir, "final_with_subs.mp4")
-            subs_posix = pathlib.Path(subs_path).as_posix()
-            style_arg = self._ffmpeg_force_style(job.subtitle_style)
-            vf = f"subtitles='{subs_posix}'"
-            if style_arg:
-                vf += f":force_style='{style_arg}'"
-            cmd = [
-                "ffmpeg",
-                "-y",
-                "-i",
-                final_path,
-                "-vf",
-                vf,
-                "-c:v",
-                "libx264",
-                "-pix_fmt",
-                "yuv420p",
-                "-c:a",
-                "copy",
-                burned_path,
-            ]
+                if subtitles_text:
+                    subs_path = os.path.join(tmpdir, "subs.srt")
+                    with open(subs_path, "w", encoding="utf-8") as f:
+                        f.write(subtitles_text)
+                    burned_path = os.path.join(tmpdir, "final_with_subs.mp4")
+                    subs_posix = pathlib.Path(subs_path).as_posix()
+                    style_arg = self._ffmpeg_force_style(job.subtitle_style)
+                    vf = f"subtitles='{subs_posix}'"
+                    if style_arg:
+                        vf += f":force_style='{style_arg}'"
+                    cmd = [
+                        "ffmpeg",
+                        "-y",
+                        "-i",
+                        final_path,
+                        "-vf",
+                        vf,
+                        "-c:v",
+                        "libx264",
+                        "-pix_fmt",
+                        "yuv420p",
+                        "-c:a",
+                        "copy",
+                        burned_path,
+                    ]
                     try:
                         subprocess.run(cmd, check=True)
                         final_path = burned_path
@@ -1029,10 +1035,7 @@ class VideoService:
                 return path
             except Exception:  # pragma: no cover
                 continue
-        try:
-            return None
-        except Exception:  # pragma: no cover
-            return None
+        return None
 
     def _merge_storyboard(self, job: VideoJob, payload: DraftApprovalRequest) -> dict[str, Any]:
         scenes_input = payload.scenes or []

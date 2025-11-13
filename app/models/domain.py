@@ -50,6 +50,7 @@ class VideoJob(BaseModel):
     storyboard_summary: Optional[str]
     voice_profile: Optional[str]
     voice_id: Optional[str]
+    subtitle_batch_size: Optional[int] = None
     soundtrack: Optional[str]
     subtitles_url: Optional[str]
     subtitles_text: Optional[str]

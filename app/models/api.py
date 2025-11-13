@@ -99,7 +99,8 @@ class MediaUploadRequest(BaseModel):
 
 
 class SubtitlesApprovalRequest(BaseModel):
-    text: str
+    text: Optional[str] = None
+    words_per_batch: Optional[int] = Field(default=None, ge=1, le=10, validation_alias="words_per_batch")
 
 
 class VoiceInfo(BaseModel):

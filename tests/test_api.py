@@ -44,7 +44,7 @@ def test_video_flow_with_local_queue():
 
     subs_resp = client.post(
         f"/videos/{job_id}/subtitles:approve",
-        json={"text": subtitles_text},
+        json={"text": "", "words_per_batch": 1},
     )
     assert subs_resp.status_code == 200
 

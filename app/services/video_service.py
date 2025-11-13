@@ -130,6 +130,7 @@ class VideoService:
             soundtrack=payload.soundtrack or self.settings.backing_track,
             subtitles_url=None,
             subtitles_text=None,
+            subtitle_batch_size=None,
             video_url=None,
             error=None,
         )
@@ -328,7 +329,10 @@ class VideoService:
             metadata={"preset": job.soundtrack},
         )
 
-        subtitles_text = self._build_subtitles(storyboard.get("scenes", []))
+        subtitles_text = self._build_subtitles(
+            storyboard.get("scenes", []),
+            job.subtitle_batch_size,
+        )
         if audio_bytes and self.whisper and self.whisper.enabled():
             try:
                 subtitles_text = self.whisper.transcribe(audio_bytes)
@@ -361,7 +365,13 @@ class VideoService:
         job = self.get_job(job_id)
         if job.stage != VideoJobStage.SUBTITLE_REVIEW:
             raise ValueError("subtitles are not awaiting approval")
-        text = payload.text.strip()
+        text = (payload.text or "").strip()
+        if payload.words_per_batch:
+            job.subtitle_batch_size = payload.words_per_batch
+        if not text:
+            if not job.storyboard:
+                raise ValueError("no storyboard available to regenerate subtitles")
+            text = self._build_subtitles(job.storyboard, job.subtitle_batch_size)
         if not text:
             raise ValueError("subtitles text cannot be empty")
         subtitles_path = f"{job.assets_folder}/subtitles.srt"
@@ -620,25 +630,50 @@ class VideoService:
         except Exception:  # pragma: no cover
             self.log.warning("job event emission failed", extra={"job_id": str(job.id)}, exc_info=True)
 
-    def _build_subtitles(self, scenes: List[dict[str, Any]]) -> str:
+    def _build_subtitles(self, scenes: List[dict[str, Any]], words_per_batch: int | None = None) -> str:
         if not scenes:
             return "1\n00:00:00,000 --> 00:00:05,000\nВидео появится скоро.\n"
         lines: List[str] = []
-        cursor = 0
-        for idx, scene in enumerate(scenes, start=1):
-            duration = int(scene.get("duration_seconds") or 5)
-            start = self._format_timestamp(cursor)
-            end = self._format_timestamp(cursor + duration)
-            text = scene.get("voiceover") or scene.get("focus") or ""
-            lines.append(f"{idx}\n{start} --> {end}\n{text}\n")
+        cursor = 0.0
+        counter = 1
+        batch_size = max(1, words_per_batch or 0) if words_per_batch else None
+        for scene in scenes:
+            duration = float(scene.get("duration_seconds") or 5)
+            text = (scene.get("voiceover") or scene.get("focus") or "").strip()
+            if batch_size and text:
+                words = text.split()
+                if not words:
+                    start = self._format_timestamp(int(cursor))
+                    end = self._format_timestamp(int(cursor + duration))
+                    lines.append(f"{counter}\n{start} --> {end}\n\n")
+                    counter += 1
+                else:
+                    chunks = [
+                        words[i : i + batch_size]
+                        for i in range(0, len(words), batch_size)
+                    ]
+                    segment = duration / len(chunks)
+                    for chunk_idx, chunk in enumerate(chunks):
+                        start_ts = self._format_timestamp(cursor + segment * chunk_idx)
+                        end_ts = self._format_timestamp(cursor + segment * (chunk_idx + 1))
+                        chunk_text = " ".join(chunk)
+                        lines.append(f"{counter}\n{start_ts} --> {end_ts}\n{chunk_text}\n")
+                        counter += 1
+            else:
+                start = self._format_timestamp(cursor)
+                end = self._format_timestamp(cursor + duration)
+                lines.append(f"{counter}\n{start} --> {end}\n{text}\n")
+                counter += 1
             cursor += duration
         return "\n".join(lines)
 
-    def _format_timestamp(self, seconds: int) -> str:
-        hours = seconds // 3600
-        minutes = (seconds % 3600) // 60
-        secs = seconds % 60
-        return f"{hours:02}:{minutes:02}:{secs:02},000"
+    def _format_timestamp(self, seconds: float) -> str:
+        total_ms = int(max(0, seconds) * 1000)
+        hours = total_ms // 3_600_000
+        minutes = (total_ms % 3_600_000) // 60_000
+        secs = (total_ms % 60_000) // 1000
+        millis = total_ms % 1000
+        return f"{hours:02}:{minutes:02}:{secs:02},{millis:03}"
 
     def _select_backgrounds(self, job: VideoJob, storyboard: dict[str, Any]) -> list[str]:
         auto_urls: list[str] = []

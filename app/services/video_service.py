@@ -644,11 +644,12 @@ class VideoService:
         except ValueError as exc:
             raise ValueError(str(exc)) from exc
         assets: list[MediaAsset] = []
+        checker = predicate or self._is_image_asset
         for obj in objects:
             key = obj.get("key")
             if not key or key.rstrip().endswith("/"):
                 continue
-            if predicate and not predicate(key):
+            if checker and not checker(key):
                 continue
             assets.append(
                 MediaAsset(

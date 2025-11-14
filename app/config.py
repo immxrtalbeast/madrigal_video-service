@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     mistral_base_url: str = "https://api.mistral.ai"
     music_catalog: list[dict[str, str]] = Field(default_factory=list)
     asset_download_timeout: float = 120.0
+    max_scenes: int = 10
+    tts_scene_retry_count: int = 3
 
 
 @lru_cache(maxsize=1)

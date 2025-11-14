@@ -34,6 +34,14 @@ class VideoJobArtifact(BaseModel):
     metadata: Optional[dict[str, Any]] = None
 
 
+class SceneAudio(BaseModel):
+    scene_index: int
+    path: Optional[str]
+    url: Optional[str]
+    duration: float
+    subtitles: Optional[str] = None
+
+
 class VideoJob(BaseModel):
     id: UUID
     idea: str
@@ -50,6 +58,7 @@ class VideoJob(BaseModel):
     storyboard_summary: Optional[str]
     voice_profile: Optional[str]
     voice_id: Optional[str]
+    scene_audio: List[SceneAudio] = Field(default_factory=list)
     subtitle_batch_size: Optional[int] = None
     subtitle_style: Optional[dict[str, Any]] = None
     soundtrack: Optional[str]

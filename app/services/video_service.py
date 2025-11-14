@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import pathlib
 import tempfile
@@ -7,11 +8,12 @@ import time
 from datetime import datetime
 import logging
 import subprocess
-from typing import Any, List
+from typing import Any, List, Optional
 from uuid import UUID, uuid4
 
 import httpx
 from PIL import Image
+from moviepy.audio.AudioClip import AudioArrayClip, concatenate_audioclips
 from moviepy.editor import (
     AudioFileClip,
     ColorClip,
@@ -21,6 +23,7 @@ from moviepy.editor import (
     concatenate_videoclips,
 )
 from moviepy.video.fx import all as vfx
+import numpy as np
 
 if not hasattr(Image, "ANTIALIAS"):
     Image.ANTIALIAS = Image.LANCZOS
@@ -42,6 +45,7 @@ from app.models.api import (
     VideoGenerationRequest,
 )
 from app.models.domain import (
+    SceneAudio,
     VideoJob,
     VideoJobArtifact,
     VideoJobStage,
@@ -149,6 +153,7 @@ class VideoService:
             storyboard_summary=None,
             voice_profile=payload.voice_profile or payload.voice_id or self.settings.tts_voice,
             voice_id=payload.voice_id or payload.voice_profile or self.settings.elevenlabs_voice_id,
+            scene_audio=[],
             soundtrack=payload.soundtrack or self.settings.backing_track,
             soundtrack_url=payload.soundtrack_url,
             background_video_url=(payload.background_video_url.strip() if payload.background_video_url else None),
@@ -253,6 +258,10 @@ class VideoService:
                 raise
         self._update_status(job, VideoJobStage.DRAFTING, "Drafted storyboard via Gemini")
         job.storyboard_summary = storyboard.get("summary")
+        scenes = storyboard.get("scenes") or []
+        max_scenes = max(1, self.settings.max_scenes or 1)
+        if scenes and len(scenes) > max_scenes:
+            storyboard["scenes"] = scenes = scenes[:max_scenes]
         storyboard_path = f"{job.assets_folder}/storyboard.json"
         storyboard_url = self.storage.upload_json(storyboard_path, storyboard)
         self._add_artifact(
@@ -275,7 +284,12 @@ class VideoService:
         if job.stage != VideoJobStage.DRAFT_REVIEW:
             raise ValueError("draft stage is not awaiting approval")
         storyboard = self._merge_storyboard(job, payload)
-        job.storyboard = storyboard.get("scenes", [])
+        scenes = storyboard.get("scenes", [])
+        max_scenes = max(1, self.settings.max_scenes or 1)
+        if scenes and len(scenes) > max_scenes:
+            scenes = scenes[:max_scenes]
+            storyboard["scenes"] = scenes
+        job.storyboard = scenes
         job.storyboard_summary = storyboard.get("summary")
         if payload.background_video_url is not None:
             sanitized = payload.background_video_url.strip()
@@ -332,18 +346,22 @@ class VideoService:
             metadata={"voice": job.voice_profile},
         )
 
-        voice_audio_url: str | None = None
-        voice_audio_path: str | None = None
-        audio_bytes: bytes | None = None
-        if self.tts and self.tts.enabled():
-            audio_bytes = self.tts.synthesize(voice_script, job.duration_seconds, voice_id=job.voice_id)
+        combined_voiceover = self._generate_scene_audio_assets(job, storyboard)
+        scenes_for_voice = storyboard.get("scenes", []) or []
+        has_full_audio = (
+            combined_voiceover
+            and job.scene_audio
+            and len(job.scene_audio) >= len(scenes_for_voice) > 0
+            and all(record.path for record in job.scene_audio)
+        )
+        if has_full_audio:
             voice_audio_path = f"{job.assets_folder}/audio/voiceover.mp3"
             voice_audio_url = self.storage.upload_bytes(
                 voice_audio_path,
-                audio_bytes,
+                combined_voiceover,
                 content_type="audio/mpeg",
             )
-            self._add_artifact(
+            self._add_or_replace_artifact(
                 job,
                 kind="voiceover",
                 path=voice_audio_path,
@@ -355,7 +373,7 @@ class VideoService:
                 },
             )
         else:
-            self._add_artifact(
+            self._add_or_replace_artifact(
                 job,
                 kind="voiceover",
                 path=voice_script_path,
@@ -400,15 +418,11 @@ class VideoService:
             job.subtitle_batch_size,
             job.subtitle_style,
         )
-        if audio_bytes and self.whisper and self.whisper.enabled() and not job.subtitle_batch_size:
-            try:
-                subtitles_text = self.whisper.transcribe(audio_bytes)
-            except Exception as exc:  # pragma: no cover
-                self.log.warning(
-                    "whisper transcription failed",
-                    extra={"job_id": str(job.id)},
-                    exc_info=exc,
-                )
+        auto_subtitles, used_transcripts = self._combine_scene_subtitles(job, storyboard.get("scenes", []))
+        subtitle_source = "auto"
+        if auto_subtitles:
+            subtitles_text = auto_subtitles
+            subtitle_source = "whisper" if used_transcripts else "auto"
         subtitles_path = f"{job.assets_folder}/subtitles.srt"
         subtitles_url = self.storage.upload_text(
             subtitles_path,
@@ -422,7 +436,7 @@ class VideoService:
             kind="subtitles",
             path=subtitles_path,
             url=subtitles_url,
-            metadata={"source": "whisper"},
+            metadata={"source": subtitle_source},
         )
         time.sleep(0.05)
 
@@ -748,6 +762,24 @@ class VideoService:
         self._emit_job_update(job)
         return artifact
 
+    def _add_or_replace_artifact(
+        self,
+        job: VideoJob,
+        kind: str,
+        path: str,
+        url: str,
+        metadata: dict[str, object] | None = None,
+    ) -> VideoJobArtifact:
+        existing = self._find_artifact(job, kind)
+        if existing:
+            existing.path = path
+            existing.url = url
+            existing.metadata = metadata or {}
+            self.repo.save(job)
+            self._emit_job_update(job)
+            return existing
+        return self._add_artifact(job, kind, path, url, metadata)
+
     def _emit_job_update(self, job: VideoJob) -> None:
         if not self.events:
             return
@@ -755,6 +787,105 @@ class VideoService:
             self.events.publish_job(job)
         except Exception:  # pragma: no cover
             self.log.warning("job event emission failed", extra={"job_id": str(job.id)}, exc_info=True)
+
+    def _generate_scene_audio_assets(self, job: VideoJob, storyboard: dict[str, Any]) -> bytes | None:
+        scenes: list[dict[str, Any]] = storyboard.get("scenes") or []
+        max_scenes = max(1, self.settings.max_scenes or 1)
+        if scenes and len(scenes) > max_scenes:
+            storyboard["scenes"] = scenes = scenes[:max_scenes]
+        job.scene_audio = []
+        job.artifacts = [artifact for artifact in job.artifacts if artifact.kind != "voiceover_scene"]
+        combined_audio = bytearray()
+        total_duration = 0.0
+        for idx, scene in enumerate(scenes):
+            record, audio_bytes = self._synthesize_scene_audio(job, scene, idx)
+            if record and record.path and record.url:
+                scene_duration = record.duration or self._estimate_duration(scene.get("voiceover") or "")
+                job.scene_audio.append(record)
+                if audio_bytes:
+                    combined_audio.extend(audio_bytes)
+            else:
+                scene_duration = self._estimate_duration(scene.get("voiceover") or "")
+                job.scene_audio.append(
+                    SceneAudio(
+                        scene_index=idx,
+                        path=None,
+                        url=None,
+                        duration=scene_duration,
+                        subtitles=None,
+                    )
+                )
+            scene["duration_seconds"] = max(1, int(math.ceil(scene_duration)))
+            scene["audio_duration"] = scene_duration
+            if record and record.url:
+                scene["audio_url"] = record.url
+            total_duration += scene_duration
+        if total_duration > 0:
+            job.duration_seconds = int(math.ceil(total_duration))
+        self.repo.save(job)
+        return bytes(combined_audio) if combined_audio else None
+
+    def _synthesize_scene_audio(
+        self,
+        job: VideoJob,
+        scene: dict[str, Any],
+        index: int,
+    ) -> tuple[SceneAudio | None, bytes | None]:
+        text = self._scene_voiceover_text(scene, index, job)
+        if not text or not self.tts or not self.tts.enabled():
+            return None, None
+        attempts = max(1, self.settings.tts_scene_retry_count or 1)
+        audio_bytes: bytes | None = None
+        for attempt in range(attempts):
+            try:
+                audio_bytes = self.tts.synthesize(text, voice_id=job.voice_id)
+                break
+            except Exception as exc:  # pragma: no cover - external API
+                self.log.warning(
+                    "scene tts failed",
+                    extra={"job_id": str(job.id), "scene": index + 1, "attempt": attempt + 1},
+                    exc_info=True,
+                )
+                time.sleep(1)
+        if not audio_bytes:
+            return None, None
+        audio_path = f"{job.assets_folder}/audio/scene-{index + 1}.mp3"
+        audio_url = self.storage.upload_bytes(
+            audio_path,
+            audio_bytes,
+            content_type="audio/mpeg",
+        )
+        duration = self._get_audio_duration(audio_bytes) or self._estimate_duration(text)
+        self._add_artifact(
+            job,
+            kind="voiceover_scene",
+            path=audio_path,
+            url=audio_url,
+            metadata={
+                "scene": index + 1,
+                "duration": duration,
+                "voice": job.voice_profile,
+            },
+        )
+        subtitles: str | None = None
+        if self.whisper and self.whisper.enabled():
+            try:
+                subtitles = self.whisper.transcribe(audio_bytes, filename=f"scene-{index + 1}.mp3")
+            except Exception:  # pragma: no cover - whisper failure
+                subtitles = None
+        return SceneAudio(
+            scene_index=index,
+            path=audio_path,
+            url=audio_url,
+            duration=duration or 0.0,
+            subtitles=subtitles,
+        ), audio_bytes
+
+    def _scene_voiceover_text(self, scene: dict[str, Any], index: int, job: VideoJob) -> str:
+        text = (scene.get("voiceover") or scene.get("focus") or "").strip()
+        if text:
+            return text
+        return f"Сцена {index + 1}. {job.idea}"
 
     def _build_subtitles(
         self,
@@ -881,6 +1012,41 @@ class VideoService:
             entries.append((start, end, content))
         return entries
 
+    def _combine_scene_subtitles(
+        self,
+        job: VideoJob,
+        scenes: List[dict[str, Any]],
+    ) -> tuple[str | None, bool]:
+        if not job.scene_audio:
+            return None, False
+        entries: list[tuple[float, float, str]] = []
+        cursor = 0.0
+        used_transcripts = False
+        for record in sorted(job.scene_audio, key=lambda x: x.scene_index):
+            scene = scenes[record.scene_index] if record.scene_index < len(scenes) else {}
+            duration = record.duration or float(scene.get("duration_seconds") or 0)
+            if record.subtitles:
+                segments = self._parse_srt_entries(record.subtitles)
+                if segments:
+                    used_transcripts = True
+                    for start, end, content in segments:
+                        entries.append((cursor + start, cursor + end, content))
+                else:
+                    text = self._scene_voiceover_text(scene, record.scene_index, job)
+                    entries.append((cursor, cursor + max(duration, 0.5), text))
+            else:
+                text = self._scene_voiceover_text(scene, record.scene_index, job)
+                entries.append((cursor, cursor + max(duration, 0.5), text))
+            cursor += max(duration, 0.5)
+        if not entries:
+            return None, False
+        lines = []
+        for idx, (start, end, content) in enumerate(entries, start=1):
+            lines.append(
+                f"{idx}\n{self._format_timestamp(start)} --> {self._format_timestamp(end)}\n{content.strip()}\n"
+            )
+        return "\n".join(lines), used_transcripts
+
     def _ffmpeg_force_style(self, style: dict[str, Any] | None) -> str | None:
         if not style:
             return None
@@ -964,6 +1130,41 @@ class VideoService:
         except Exception:
             return None
 
+    def _build_scene_voice_clip(self, job: VideoJob, tmpdir: str):
+        if not job.scene_audio:
+            return None, None
+        clips = []
+        for record in sorted(job.scene_audio, key=lambda x: x.scene_index):
+            if not record.path:
+                duration = max(record.duration, 0.5)
+                samples = max(int(duration * 44100), 1)
+                silent_array = np.zeros((samples, 1), dtype=np.float32)
+                clips.append(AudioArrayClip(silent_array, fps=44100))
+                continue
+            try:
+                audio_bytes = self.storage.download_bytes(record.path)
+            except ValueError:
+                continue
+            if not audio_bytes:
+                continue
+            audio_path = os.path.join(tmpdir, f"scene-audio-{record.scene_index + 1}.mp3")
+            with open(audio_path, "wb") as f:
+                f.write(audio_bytes)
+            try:
+                clip = AudioFileClip(audio_path)
+            except Exception:  # pragma: no cover
+                continue
+            clips.append(clip)
+        if not clips:
+            return None, None
+        voice_clip = concatenate_audioclips(clips)
+        return voice_clip, voice_clip.duration
+
+    def _estimate_duration(self, text: str) -> float:
+        words = max(len(text.split()), 1)
+        wpm = 150
+        return max(1.5, (words / max(wpm, 1)) * 60.0)
+
     def _find_artifact(self, job: VideoJob, kind: str) -> VideoJobArtifact | None:
         for artifact in job.artifacts:
             if artifact.kind == kind:
@@ -973,6 +1174,8 @@ class VideoService:
     def _load_voiceover_audio(self, job: VideoJob) -> bytes | None:
         artifact = self._find_artifact(job, "voiceover")
         if not artifact or not artifact.path:
+            return None
+        if not artifact.path.lower().endswith((".mp3", ".wav", ".ogg")):
             return None
         try:
             return self.storage.download_bytes(artifact.path)
@@ -1052,7 +1255,13 @@ class VideoService:
                 audio_clips: list[Any] = []
                 final_audio_clip = None
                 voice_clip = None
-                if audio_bytes:
+                if job.scene_audio:
+                    voice_clip, inferred_duration = self._build_scene_voice_clip(job, tmpdir)
+                    if voice_clip:
+                        audio_clips.append(voice_clip)
+                        if inferred_duration:
+                            total_duration = inferred_duration
+                elif audio_bytes:
                     audio_path = os.path.join(tmpdir, "voiceover.mp3")
                     with open(audio_path, "wb") as f:
                         f.write(audio_bytes)

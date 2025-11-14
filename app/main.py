@@ -5,7 +5,7 @@ import binascii
 import logging
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile, status
 
 from app.config import Settings, get_settings
 from app.models.api import (
@@ -168,6 +168,29 @@ def upload_video_media(
     service: VideoService = Depends(get_video_service),
 ) -> MediaUploadResponse:
     return upload_media(payload, user_id, service)
+
+
+@app.post("/media/videos:upload", response_model=MediaUploadResponse, status_code=status.HTTP_201_CREATED)
+def upload_video_binary(
+    folder: str = Form(..., description="Каталог внутри пользовательского namespace (например videos/test)"),
+    file: UploadFile = File(...),
+    filename: str | None = Form(None),
+    user_id: str = Depends(require_user_id),
+    service: VideoService = Depends(get_video_service),
+) -> MediaUploadResponse:
+    data = file.file.read()
+    effective_name = filename or file.filename or "upload.bin"
+    try:
+        asset = service.upload_media(
+            folder=folder,
+            filename=effective_name,
+            data=data,
+            user_id=user_id,
+            content_type=file.content_type or "application/octet-stream",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return MediaUploadResponse(asset=asset)
 
 
 @app.get("/media/videos", response_model=MediaListResponse)

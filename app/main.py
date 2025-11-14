@@ -74,13 +74,13 @@ def create_video(
     return VideoJobResponse(job=job)
 
 
-@app.get("/videos", response_model=MediaListResponse)
+@app.get("/videos", response_model=VideoJobListResponse)
 def list_videos(
     user_id: str = Depends(require_user_id),
     service: VideoService = Depends(get_video_service),
-) -> MediaListResponse:
-    items = service.list_job_outputs(user_id)
-    return MediaListResponse(items=items)
+) -> VideoJobListResponse:
+    items = service.list_user_jobs(user_id)
+    return VideoJobListResponse(items=items)
 
 
 @app.get("/videos/{job_id}", response_model=VideoJobResponse)

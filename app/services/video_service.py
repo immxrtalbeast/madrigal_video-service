@@ -1,29 +1,30 @@
 from __future__ import annotations
 
+import json
+import logging
 import math
 import os
 import pathlib
+import subprocess
 import tempfile
 import time
 from datetime import datetime
-import logging
-import subprocess
-from typing import Any, List, Optional, Callable
+from typing import Any, Callable, List, Optional
 from uuid import UUID, uuid4
 
 import httpx
+import numpy as np
 from PIL import Image
 from moviepy.audio.AudioClip import AudioArrayClip, concatenate_audioclips
 from moviepy.editor import (
     AudioFileClip,
     ColorClip,
+    CompositeAudioClip,
     ImageClip,
     VideoFileClip,
-    CompositeAudioClip,
     concatenate_videoclips,
 )
 from moviepy.video.fx import all as vfx
-import numpy as np
 
 if not hasattr(Image, "ANTIALIAS"):
     Image.ANTIALIAS = Image.LANCZOS
@@ -165,7 +166,7 @@ class VideoService:
             video_url=None,
             error=None,
         )
-        self.repo.save(job)
+        self._save_job(job)
         if self.queue is not None:
             self.queue.enqueue(job.id)
         self._emit_job_update(job)
@@ -174,7 +175,12 @@ class VideoService:
     def get_job(self, job_id: UUID, user_id: str | None = None) -> VideoJob:
         job = self.repo.get(job_id)
         if not job:
-            raise ValueError("Video job not found")
+            if user_id:
+                job = self._load_job_from_storage(user_id, job_id)
+                if job:
+                    self._save_job(job)
+            if not job:
+                raise ValueError("Video job not found")
         if user_id and job.user_id != user_id:
             raise ValueError("Video job not found")
         return job
@@ -182,26 +188,13 @@ class VideoService:
     def list_jobs(self) -> list[VideoJob]:
         return self.repo.list()
 
-    def list_job_outputs(self, user_id: str) -> list[MediaAsset]:
-        prefix = self._compose_job_prefix(user_id)
-        try:
-            objects = self.storage.list_files(prefix)
-        except ValueError as exc:
-            raise ValueError(str(exc)) from exc
-        assets: list[MediaAsset] = []
-        for obj in objects:
-            key = obj.get("key")
-            if not key or key.rstrip().endswith("/"):
-                continue
-            assets.append(
-                MediaAsset(
-                    key=key,
-                    url=obj.get("url", ""),
-                    size=obj.get("size"),
-                    last_modified=obj.get("last_modified"),
-                )
-            )
-        return assets
+    def list_user_jobs(self, user_id: str) -> list[VideoJob]:
+        jobs = self.repo.list()
+        filtered = [job for job in jobs if job.user_id == user_id]
+        if not filtered:
+            filtered = self._load_jobs_from_storage(user_id)
+        filtered.sort(key=lambda job: job.created_at, reverse=True)
+        return filtered
 
     def process_job(self, job_id: UUID) -> None:
         job = self.repo.get(job_id)
@@ -503,7 +496,7 @@ class VideoService:
             artifact.url = subtitles_url
         else:
             self._add_artifact(job, kind="subtitles", path=subtitles_path, url=subtitles_url)
-        self.repo.save(job)
+        self._save_job(job)
         self._update_status(job, VideoJobStage.SUBTITLE_REVIEW, "Subtitles approved. Queued for rendering")
         if self.queue is not None:
             self.queue.enqueue(job.id)
@@ -578,7 +571,7 @@ class VideoService:
             job.video_url = video_url
         if error:
             job.error = error
-        self.repo.save(job)
+        self._save_job(job)
         self._emit_job_update(job)
 
     def upload_media(
@@ -761,6 +754,11 @@ class VideoService:
         user_segment = self._normalize_storage_segment(user_id)
         return "/".join(segment for segment in (jobs_root, user_segment) if segment)
 
+    def _job_status_path(self, user_id: str, job_id: UUID) -> str:
+        return "/".join(
+            segment for segment in ("jobs", self._normalize_storage_segment(user_id), str(job_id), "status.json") if segment
+        )
+
     def _user_media_prefix(self, folder: str, user_id: str) -> str:
         folder_segment = self._normalize_storage_segment(folder)
         user_segment = self._normalize_storage_segment(user_id)
@@ -797,6 +795,60 @@ class VideoService:
         lowered = key.lower()
         return lowered.endswith((".mp4", ".mov", ".webm", ".mkv", ".avi"))
 
+    def _save_job(self, job: VideoJob) -> None:
+        self.repo.save(job)
+        try:
+            self._persist_job_snapshot(job)
+        except Exception as exc:  # pragma: no cover - storage best effort
+            self.log.warning(
+                "job snapshot persist failed",
+                extra={"job_id": str(job.id), "error": str(exc)},
+            )
+
+    def _persist_job_snapshot(self, job: VideoJob) -> None:
+        payload = job.model_dump(mode="json")
+        path = self._job_status_path(job.user_id, job.id)
+        self.storage.upload_json(path, payload)
+
+    def _load_job_from_storage(self, user_id: str, job_id: UUID) -> VideoJob | None:
+        path = self._job_status_path(user_id, job_id)
+        try:
+            raw = self.storage.download_bytes(path)
+        except ValueError:
+            return None
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+            return VideoJob.model_validate(payload)
+        except Exception:  # pragma: no cover - corrupt snapshot
+            self.log.warning("job snapshot parse failed", extra={"job_id": str(job_id)}, exc_info=True)
+            return None
+
+    def _load_jobs_from_storage(self, user_id: str) -> list[VideoJob]:
+        prefix = self._compose_job_prefix(user_id)
+        try:
+            objects = self.storage.list_files(prefix)
+        except ValueError as exc:
+            self.log.warning("job snapshot list failed", extra={"user_id": user_id, "error": str(exc)})
+            return []
+        jobs: list[VideoJob] = []
+        for obj in objects:
+            key = obj.get("key") or ""
+            if not key.endswith("status.json"):
+                continue
+            try:
+                raw = self.storage.download_bytes(key)
+            except ValueError:
+                continue
+            try:
+                payload = json.loads(raw.decode("utf-8"))
+                job = VideoJob.model_validate(payload)
+            except Exception:  # pragma: no cover
+                self.log.warning("job snapshot parse failed", extra={"key": key}, exc_info=True)
+                continue
+            self.repo.save(job)
+            jobs.append(job)
+        return jobs
+
     def _add_artifact(
         self,
         job: VideoJob,
@@ -812,7 +864,7 @@ class VideoService:
             metadata=metadata or {},
         )
         job.artifacts.append(artifact)
-        self.repo.save(job)
+        self._save_job(job)
         self._emit_job_update(job)
         return artifact
 
@@ -829,7 +881,7 @@ class VideoService:
             existing.path = path
             existing.url = url
             existing.metadata = metadata or {}
-            self.repo.save(job)
+            self._save_job(job)
             self._emit_job_update(job)
             return existing
         return self._add_artifact(job, kind, path, url, metadata)
@@ -876,7 +928,7 @@ class VideoService:
             total_duration += scene_duration
         if total_duration > 0:
             job.duration_seconds = int(math.ceil(total_duration))
-        self.repo.save(job)
+        self._save_job(job)
         return bytes(combined_audio) if combined_audio else None
 
     def _synthesize_scene_audio(

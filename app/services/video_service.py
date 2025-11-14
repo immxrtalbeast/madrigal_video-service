@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 import logging
 import subprocess
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Callable
 from uuid import UUID, uuid4
 
 import httpx
@@ -581,30 +581,14 @@ class VideoService:
         return MediaAsset(key=key, url=url, size=len(data))
 
     def list_media(self, folder: str | None, user_id: str) -> list[MediaAsset]:
-        prefix = self._user_media_prefix(folder or "", user_id)
-        try:
-            objects = self.storage.list_files(prefix)
-        except ValueError as exc:
-            raise ValueError(str(exc)) from exc
-        assets: list[MediaAsset] = []
-        for obj in objects:
-            key = obj.get("key")
-            if not key:
-                continue
-            if key.rstrip().endswith("/"):
-                continue
-            assets.append(
-                MediaAsset(
-                    key=key,
-                    url=obj.get("url", ""),
-                    size=obj.get("size"),
-                    last_modified=obj.get("last_modified"),
-                )
-            )
-        return assets
+        user_assets = self._list_user_media(folder, user_id, predicate=None)
+        shared_assets = self.list_shared_media(folder)
+        return self._merge_assets(user_assets, shared_assets)
 
     def list_media_videos(self, folder: str | None, user_id: str) -> list[MediaAsset]:
-        return [asset for asset in self.list_media(folder, user_id) if self._is_video_asset(asset.key)]
+        user_assets = self._list_user_media(folder, user_id, predicate=self._is_video_asset)
+        shared_assets = self.list_shared_videos(folder)
+        return self._merge_assets(user_assets, shared_assets)
 
     def list_shared_media(self, folder: str | None = None) -> list[MediaAsset]:
         prefix = self._compose_shared_prefix(folder)
@@ -647,6 +631,44 @@ class VideoService:
                 )
             )
         return assets
+
+    def _list_user_media(
+        self,
+        folder: str | None,
+        user_id: str,
+        predicate: Callable[[str], bool] | None = None,
+    ) -> list[MediaAsset]:
+        prefix = self._user_media_prefix(folder or "", user_id)
+        try:
+            objects = self.storage.list_files(prefix)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        assets: list[MediaAsset] = []
+        for obj in objects:
+            key = obj.get("key")
+            if not key or key.rstrip().endswith("/"):
+                continue
+            if predicate and not predicate(key):
+                continue
+            assets.append(
+                MediaAsset(
+                    key=key,
+                    url=obj.get("url", ""),
+                    size=obj.get("size"),
+                    last_modified=obj.get("last_modified"),
+                )
+            )
+        return assets
+
+    def _merge_assets(self, primary: list[MediaAsset], secondary: list[MediaAsset]) -> list[MediaAsset]:
+        result = list(primary)
+        seen = {asset.key for asset in primary}
+        for asset in secondary:
+            if asset.key in seen:
+                continue
+            result.append(asset)
+            seen.add(asset.key)
+        return result
 
     def list_voices(self) -> list[dict[str, str]]:
         if self.voice_catalog:

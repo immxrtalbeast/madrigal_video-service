@@ -129,10 +129,11 @@ class VideoService:
     def bind_queue(self, queue: BaseQueue) -> None:
         self.queue = queue
 
-    def create_job(self, payload: VideoGenerationRequest) -> VideoJob:
-        assets_folder = self._build_assets_folder()
+    def create_job(self, payload: VideoGenerationRequest, user_id: str) -> VideoJob:
+        assets_folder = self._build_assets_folder(user_id)
         job = VideoJob(
             id=uuid4(),
+            user_id=user_id,
             idea=payload.idea.strip(),
             language=payload.language or self.settings.default_language,
             duration_seconds=payload.duration_seconds or 45,
@@ -170,14 +171,37 @@ class VideoService:
         self._emit_job_update(job)
         return job
 
-    def get_job(self, job_id: UUID) -> VideoJob:
+    def get_job(self, job_id: UUID, user_id: str | None = None) -> VideoJob:
         job = self.repo.get(job_id)
         if not job:
+            raise ValueError("Video job not found")
+        if user_id and job.user_id != user_id:
             raise ValueError("Video job not found")
         return job
 
     def list_jobs(self) -> list[VideoJob]:
         return self.repo.list()
+
+    def list_job_outputs(self, user_id: str) -> list[MediaAsset]:
+        prefix = self._compose_job_prefix(user_id)
+        try:
+            objects = self.storage.list_files(prefix)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        assets: list[MediaAsset] = []
+        for obj in objects:
+            key = obj.get("key")
+            if not key or key.rstrip().endswith("/"):
+                continue
+            assets.append(
+                MediaAsset(
+                    key=key,
+                    url=obj.get("url", ""),
+                    size=obj.get("size"),
+                    last_modified=obj.get("last_modified"),
+                )
+            )
+        return assets
 
     def process_job(self, job_id: UUID) -> None:
         job = self.repo.get(job_id)
@@ -279,8 +303,8 @@ class VideoService:
         job.storyboard_summary = storyboard.get("summary")
         self._update_status(job, VideoJobStage.DRAFT_REVIEW, "Awaiting storyboard approval")
 
-    def approve_draft(self, job_id: UUID, payload: DraftApprovalRequest) -> VideoJob:
-        job = self.get_job(job_id)
+    def approve_draft(self, job_id: UUID, payload: DraftApprovalRequest, user_id: str) -> VideoJob:
+        job = self.get_job(job_id, user_id)
         if job.stage != VideoJobStage.DRAFT_REVIEW:
             raise ValueError("draft stage is not awaiting approval")
         storyboard = self._merge_storyboard(job, payload)
@@ -442,8 +466,8 @@ class VideoService:
 
         self._update_status(job, VideoJobStage.SUBTITLE_REVIEW, "Awaiting subtitle approval")
 
-    def approve_subtitles(self, job_id: UUID, payload: SubtitlesApprovalRequest) -> VideoJob:
-        job = self.get_job(job_id)
+    def approve_subtitles(self, job_id: UUID, payload: SubtitlesApprovalRequest, user_id: str) -> VideoJob:
+        job = self.get_job(job_id, user_id)
         if job.stage != VideoJobStage.SUBTITLE_REVIEW:
             raise ValueError("subtitles are not awaiting approval")
         text = (payload.text or "").strip()
@@ -506,7 +530,7 @@ class VideoService:
         selected_backgrounds = self._select_backgrounds(job, storyboard)
         audio_bytes = self._load_voiceover_audio(job)
         subtitles_text = self._load_subtitles_text(job)
-        video_path = f"{job.assets_folder}/final.mp4"
+        job_output_path = f"jobs/{self._normalize_storage_segment(job.user_id)}/{job.id}/final.mp4"
         audio_duration = self._get_audio_duration(audio_bytes)
         video_bytes = self._render_video(
             job,
@@ -517,14 +541,14 @@ class VideoService:
             audio_duration=audio_duration,
         )
         if video_bytes:
-            video_url = self.storage.upload_bytes(video_path, video_bytes, content_type="video/mp4")
+            video_url = self.storage.upload_bytes(job_output_path, video_bytes, content_type="video/mp4")
         else:
-            video_url = self.storage.upload_bytes(video_path, b"", content_type="video/mp4")
+            video_url = self.storage.upload_bytes(job_output_path, b"", content_type="video/mp4")
         job.video_url = video_url
         self._add_artifact(
             job,
             kind="video",
-            path=video_path,
+            path=job_output_path,
             url=video_url,
             metadata={"status": "placeholder"},
         )
@@ -716,10 +740,12 @@ class VideoService:
             )
         return items
 
-    def _build_assets_folder(self) -> str:
+    def _build_assets_folder(self, user_id: str) -> str:
         timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
         prefix = self.settings.storage_folder_prefix.strip("/")
-        parts = [prefix, f"{timestamp}-{uuid4().hex[:8]}"] if prefix else [f"{timestamp}-{uuid4().hex[:8]}"]
+        user_segment = self._normalize_storage_segment(user_id)
+        unique = f"{timestamp}-{uuid4().hex[:8]}"
+        parts = [segment for segment in (prefix, user_segment, unique) if segment]
         return "/".join(parts)
 
     def _compose_media_prefix(self, folder: str | None) -> str:
@@ -729,6 +755,11 @@ class VideoService:
             return folder_segment
         parts = [segment for segment in (root_segment, folder_segment) if segment]
         return "/".join(parts)
+
+    def _compose_job_prefix(self, user_id: str) -> str:
+        jobs_root = "jobs"
+        user_segment = self._normalize_storage_segment(user_id)
+        return "/".join(segment for segment in (jobs_root, user_segment) if segment)
 
     def _user_media_prefix(self, folder: str, user_id: str) -> str:
         folder_segment = self._normalize_storage_segment(folder)

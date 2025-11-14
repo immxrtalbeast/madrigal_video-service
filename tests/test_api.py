@@ -16,11 +16,12 @@ def test_video_flow_with_local_queue():
         "language": "ru",
         "voice_id": "test-voice",
     }
-    create_resp = client.post("/videos", json=payload)
+    headers = {"X-User-ID": "tester"}
+    create_resp = client.post("/videos", json=payload, headers=headers)
     assert create_resp.status_code == 202
     job_id = create_resp.json()["job"]["id"]
 
-    draft_resp = client.get(f"/videos/{job_id}")
+    draft_resp = client.get(f"/videos/{job_id}", headers=headers)
     assert draft_resp.status_code == 200
     draft_job = draft_resp.json()["job"]
     assert draft_job["stage"] == "draft_review"
@@ -28,12 +29,12 @@ def test_video_flow_with_local_queue():
         "summary": draft_job.get("storyboard_summary"),
         "scenes": draft_job.get("storyboard"),
     }
-    approve_resp = client.post(f"/videos/{job_id}/draft:approve", json=approval_payload)
+    approve_resp = client.post(f"/videos/{job_id}/draft:approve", json=approval_payload, headers=headers)
     assert approve_resp.status_code == 200
 
     subtitles_text = None
     for _ in range(40):
-        status_resp = client.get(f"/videos/{job_id}")
+        status_resp = client.get(f"/videos/{job_id}", headers=headers)
         assert status_resp.status_code == 200
         job_payload = status_resp.json()["job"]
         if job_payload["stage"] == "subtitle_review":
@@ -49,23 +50,25 @@ def test_video_flow_with_local_queue():
             "words_per_batch": 1,
             "style": {"font_family": "Arial", "font_size": 40, "uppercase": True},
         },
+        headers=headers,
     )
     assert subs_resp.status_code == 200
 
     status = None
     for _ in range(40):
-        status_resp = client.get(f"/videos/{job_id}")
+        status_resp = client.get(f"/videos/{job_id}", headers=headers)
         assert status_resp.status_code == 200
         status = status_resp.json()["job"]["status"]
         if status == "ready":
             break
         time.sleep(0.05)
 
-    list_resp = client.get("/videos")
+    list_resp = client.get("/videos", headers=headers)
     assert list_resp.status_code == 200
-    assert any(item["id"] == job_id for item in list_resp.json()["items"])
+    jobs_listing = list_resp.json()["items"]
+    assert any(job_id in item["key"] for item in jobs_listing)
 
-    final_job = client.get(f"/videos/{job_id}").json()["job"]
+    final_job = client.get(f"/videos/{job_id}", headers=headers).json()["job"]
     assert final_job["subtitle_style"]["font_family"] == "Arial"
 
     expand_resp = client.post("/ideas:expand", json={"idea": "видео о пользе медитации"})

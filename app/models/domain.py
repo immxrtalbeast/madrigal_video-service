@@ -44,6 +44,7 @@ class SceneAudio(BaseModel):
 
 class VideoJob(BaseModel):
     id: UUID
+    user_id: str
     idea: str
     language: str
     duration_seconds: int

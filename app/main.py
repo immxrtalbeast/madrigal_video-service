@@ -67,21 +67,30 @@ def _build_queue(settings: Settings, service: VideoService):
 @app.post("/videos", response_model=VideoJobResponse, status_code=status.HTTP_202_ACCEPTED)
 def create_video(
     payload: VideoGenerationRequest,
+    user_id: str = Depends(require_user_id),
     service: VideoService = Depends(get_video_service),
 ) -> VideoJobResponse:
-    job = service.create_job(payload)
+    job = service.create_job(payload, user_id)
     return VideoJobResponse(job=job)
 
 
-@app.get("/videos", response_model=VideoJobListResponse)
-def list_videos(service: VideoService = Depends(get_video_service)) -> VideoJobListResponse:
-    return VideoJobListResponse(items=service.list_jobs())
+@app.get("/videos", response_model=MediaListResponse)
+def list_videos(
+    user_id: str = Depends(require_user_id),
+    service: VideoService = Depends(get_video_service),
+) -> MediaListResponse:
+    items = service.list_job_outputs(user_id)
+    return MediaListResponse(items=items)
 
 
 @app.get("/videos/{job_id}", response_model=VideoJobResponse)
-def get_video(job_id: UUID, service: VideoService = Depends(get_video_service)) -> VideoJobResponse:
+def get_video(
+    job_id: UUID,
+    user_id: str = Depends(require_user_id),
+    service: VideoService = Depends(get_video_service),
+) -> VideoJobResponse:
     try:
-        job = service.get_job(job_id)
+        job = service.get_job(job_id, user_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return VideoJobResponse(job=job)
@@ -100,10 +109,11 @@ def expand_idea(
 def approve_draft(
     job_id: UUID,
     payload: DraftApprovalRequest,
+    user_id: str = Depends(require_user_id),
     service: VideoService = Depends(get_video_service),
 ) -> VideoJobResponse:
     try:
-        job = service.approve_draft(job_id, payload)
+        job = service.approve_draft(job_id, payload, user_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return VideoJobResponse(job=job)
@@ -113,10 +123,11 @@ def approve_draft(
 def approve_subtitles(
     job_id: UUID,
     payload: SubtitlesApprovalRequest,
+    user_id: str = Depends(require_user_id),
     service: VideoService = Depends(get_video_service),
 ) -> VideoJobResponse:
     try:
-        job = service.approve_subtitles(job_id, payload)
+        job = service.approve_subtitles(job_id, payload, user_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return VideoJobResponse(job=job)
